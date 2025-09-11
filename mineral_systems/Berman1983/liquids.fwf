@@ -1,0 +1,5 @@
+Name                Abbrev     Formula            Enthalpy     Entropy    Volume           a           c            d              f
+SiO2-liquid         SiO2Liq    SiO2               -904.927      45.000    28.380     121.630           0.   -1444.383          0.000
+Al2O3-liquid        Al2O3Liq   Al2O3             -1548.481     102.785    25.575     154.820           0.    -677.889      -8071.355
+CaO-liquid          CaOLiq     CaO                -554.897      26.228    16.764      76.044           0.       0.000          0.000
+MgO-liquid          MgOLiq     MgO                -491.967      63.685    16.764      60.428           0.    -206.533      -2674.372

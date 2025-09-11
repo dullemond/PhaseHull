@@ -1,0 +1,25 @@
+Name                    Abbrev  Formula        NameLong                 Enthalpy  Entropy   Volume        a          c         f           h
+a-quartz                a-qz    SiO2           Alpha quartz             -910.800   41.643   23.464   79.166   -229130.      0       -9587.00
+b-quartz                b-qz    SiO2           Beta quartz              -910.505   41.713   23.718   78.190   -810399.      0       -7421.32
+b-tridymite             Trid    SiO2           Beta tridymite           -909.466   42.030   27.414   86.576  -1495314.   -434.33        0   
+b-cristobalite          Cris    SiO2           Beta cristobalite        -908.522   43.625   27.381   82.196         0       0      -11333.60
+Corundum                Coru    Al2O3          Corundum                -1674.411   50.820   25.575  152.724   -852486.   -522.58   -10067.91
+Lime                    Lime    CaO            Lime                     -635.990   39.750   16.764   57.076   -403034.      0       -3103.66
+Andalusite              Anda    Al2SiO5        Andalusite              -2585.711   93.332   51.590  228.016   -512804.   -206.80   -26116.87
+Kyanite                 Kyan    Al2SiO5        Kyanite                 -2590.297   83.907   44.230  238.437   -487461.   -543.84   -23775.99
+Sillimanite             Sill    Al2SiO5        Sillimanite             -2582.562   96.950   50.000  253.038  -2292825.  -1807.07        0   
+Wollastonite            Woll    CaSiO3         Wollastonite            -1632.170   83.532   40.030  135.382  -1038737.      0      -11457.00
+Pseudowollastonite      PsWo    CaSiO3         Pseudowollastonite      -1626.056   88.142   40.220  138.583         0       0      -15533.48
+Rankinite               Rank    Ca3Si2O7       Rankinite               -3940.436  213.390   96.506  339.510  -3384403.   -772.17   -12621.25
+b-larnite               b-lr    Ca2SiO4        Beta larnite            -2310.140  125.950   51.600  247.882         0   -2059.37        0   
+g-larnite               g-lr    Ca2SiO4        Gamma larnite           -2320.294  118.840   59.110  241.921         0   -1997.54        0   
+a’-larnite              a-lr    Ca2SiO4        Alpha’ larnite          -2309.060  127.622   59.298  252.572         0   -2182.967       0   
+a-larnite               Larn    Ca2SiO4        Alpha larnite           -2289.259  143.296   52.456  235.676         0   -1891.23        0   
+Tricalcium silicate     C3S1    Ca3SiO5        Tricalcium silicate     -2943.382  166.020   72.742  322.749         0   -2409.16    -3383.01
+Tricalcium aluminate    C3A1    Ca3Al2O6       Tricalcium aluminate    -3606.151  207.950    0      304.519         0       0      -28244.70
+Calcium aluminate       C1A1    CaAl2O4        Calcium aluminate       -2330.292  115.348    0      220.693  -1372400.  -1461.31        0   
+Calcium dialuminate     C1A2    CaAl4O7        Calcium dialuminate     -4007.413  175.060    0      345.537  -1199855.   -672.40   -27883.55
+Calcium hexaluminate    C1A6    CaAl12O19      Calcium hexaluminate   -10724.605  368.719    0      973.423  -5517950.  -3135.46   -63511.12
+Anorthite               Anor    CaAl2Si2O8     Anorthite               -4229.953  199.900  100.740  422.521  -2189052.  -3219.94        0   
+Gehlenite               Gehl    Ca2Al2SiO7     Gehlenite               -3984.014  206.520   90.330  379.775  -1405905.  -2415.33    -5271.99
+Grossular               Gros    Ca3Al2Si3O12   Grossular               -6638.086  252.160  125.270  532.297  -8048585.      0      -34185.96
