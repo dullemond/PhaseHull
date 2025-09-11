@@ -20,7 +20,9 @@ You can find examples in the models/ directory. They are .py files (not .ipynb f
 
 Then run the code using
 
-   %run model_<xxx>.py
+   %run model_xxx.py
+
+where xxx should be replaced by the model name in the models/ directory.
 
 Note that the models use the mpltern python library for plotting ternary plots.
 
