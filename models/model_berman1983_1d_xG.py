@@ -17,21 +17,21 @@ relevel    = True
 #T          = 2000.
 T          = 2500.
 
-#endmembers = ["CaO","SiO2"]
-#endmembers = ["SiO2","Al2O3"]
-endmembers = ["CaO","Al2O3"]
-#endmembers = ["MgO","SiO2"]
-#endmembers = ["MgO","CaO"]
-#endmembers = ["MgO","Al2O3"]
+#components = ["CaO","SiO2"]
+#components = ["SiO2","Al2O3"]
+components = ["CaO","Al2O3"]
+#components = ["MgO","SiO2"]
+#components = ["MgO","CaO"]
+#components = ["MgO","Al2O3"]
 
-b          = Berman83(endmembers,T)
+b          = Berman83(components,T)
 def Gfunc(x):
     return b.Gfunc(x)
 
 crystaldb  = ph.CrystalDatabase(b.mdb)
-liquid     = ph.Liquid('magma',endmembers,Gfunc)
+liquid     = ph.Liquid('magma',components,Gfunc)
 
-phull      = ph.PhaseHull(endmembers,crystaldb,liquid,nres0=100)
+phull      = ph.PhaseHull(components,crystaldb,liquid,nres0=100)
 
 isel_allc  = phull.select_simplices_of_a_given_kind('allcryst')
 isel_liq   = phull.select_simplices_of_a_given_kind('liquid')
@@ -40,7 +40,7 @@ isel_inmis = phull.select_simplices_of_a_given_kind('tieline_c0l2')
 
 simplices  = phull.thesimplices[-1]
 
-phull.define_a_relevelling_plane(endmembers=endmembers)
+phull.define_a_relevelling_plane(components=components)
 
 G_liq      = phull.thepoints_liq[-1][:,-1]
 G_cryst    = phull.thepoints_cryst[-1][:,-1]
@@ -69,8 +69,8 @@ for i in isel_inmis: plt.plot([simplices['x'][i,0,0],simplices['x'][i,1,0]],[sim
 plt.xlabel('x')
 plt.ylabel(ylabel)
 ytxt = plt.gca().get_ylim()[0] + 3
-plt.text(0,ytxt,ph.latexify_chemical_formula(endmembers[1]),ha='center')
-plt.text(1,ytxt,ph.latexify_chemical_formula(endmembers[0]),ha='center')
+plt.text(0,ytxt,ph.latexify_chemical_formula(components[1]),ha='center')
+plt.text(1,ytxt,ph.latexify_chemical_formula(components[0]),ha='center')
 ytxt = plt.gca().get_ylim()[1] - 6
 plt.text(0.65,ytxt,f'T = {T:.0f} K')
 plt.text(0.65,ytxt-4,f'P = 1 bar')
@@ -81,5 +81,5 @@ if relevel:
     srel='_rel'
 else:
     srel=''
-plt.savefig(f'fig_binary_{endmembers[0]}_{endmembers[1]}_x_G_T={T:.0f}'+srel+'.pdf')
+plt.savefig(f'fig_binary_{components[0]}_{components[1]}_x_G_T={T:.0f}'+srel+'.pdf')
 plt.show()

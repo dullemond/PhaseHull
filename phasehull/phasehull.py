@@ -44,6 +44,8 @@ class CrystalDatabase(object):
             raise  ValueError(f'Error: dbase must be a pandas DataFrame')
         self.dbase  = dbase
         self.reset  = resetfunc
+        # For convenience: A dictionary from abbreviation to integer index
+        self.index  = {index: value for value, index in enumerate(self.dbase['Abbrev'])}
 
 class Liquid(object):
     """
@@ -51,7 +53,8 @@ class Liquid(object):
     non-stoichiometric material (e.g., an alloy or a glas), which has a
     Gibbs energy for any value of fractional abundance vector x.
     """
-    def __init__(self,name,endmembers,Gfunc,kwforGfunc=None,resetfunc=None):
+    def __init__(self,name,components,Gfunc,kwforGfunc=None,resetfunc=None,
+                 gammafunc=None):
         """
         Arguments:
 
@@ -60,19 +63,19 @@ class Liquid(object):
                        Only important if one has more than one continuous
                        non-stoichiometric phases.
 
-          endmembers   A list of names of the endmembers out of which this liquid
+          components   List of names of the system components out of which this liquid
                        or alloy is composed. Important to assure the appropriate
                        order of the x-values when this class is used in other
-                       parts of the code. For example, if endmembers =
+                       parts of the code. For example, if components =
                        ['MgO','SiO2','CaO'] and the fractional abundances are
                        given as [0.2,0.7,0.1], then it means that the liquid has
                        0.2 mole fraction of MgO, 0.7 mole fraction of SiO2 and
                        0.1 mole fraction of CaO. Particularly important if other
-                       parts of the code use only a subset of these endmembers,
+                       parts of the code use only a subset of these components,
                        or a different order of them.
 
           Gfunc        A Python function for Gibbs(x) where x is either a 1D array
-                       [x[0],x[1]...x[M-1]] with M = len(endmembers) or x is a
+                       [x[0],x[1]...x[M-1]] with M = len(components) or x is a
                        2D array x[N,M] with N is the number of sampling points
                        in the M-dimensional phase space. The function Gfunc must
                        be able to accept these 2D x arrays (i.e., 1D array of
@@ -88,44 +91,48 @@ class Liquid(object):
           resetfunc    A function with arguments (T,P), i.e. temperature (in Kelvin) and
                        pressure (in bar) that reconfigures the Gfunc to compute
                        the Gibbs energy for the new T and P.
-        """
-        self.name         = name
-        self.endmembers   = np.array(endmembers)
-        self.Gfunc        = Gfunc
-        self.kwforGfunc   = kwforGfunc
-        self.reset        = resetfunc
 
-    def call_Gfunc(self,endmem,x):
+          gammafunc    If set, this is a function gamma(x), the activity
+                       coefficient, defined such that the activity a=gamma*x.
+        """
+        self.name             = name
+        self.components       = np.array(components)
+        self.Gfunc            = Gfunc
+        self.kwforGfunc       = kwforGfunc
+        self.reset            = resetfunc
+        self.gammafunc        = gammafunc
+
+    def call_Gfunc(self,compon,x):
         """
         Interface to the Gibbs function provided by the user, allowing it to
-        be used for a subset or different order of endmembers.
+        be used for a subset or different order of components.
 
         Arguments:
 
-          endmem       List of names of the endmembers in the correct order
-                       in which they are in x. All endmem must be part of the
-                       self.endmembers list.
+          compon       List of names of the components in the correct order
+                       in which they are in x. All compon must be part of the
+                       self.components list.
 
           x            Array x[N,M] of mole fractions such that x.sum(axis=1)==1.
-                       Here M is len(endmem), and N is the number of sampling
+                       Here M is len(compon), and N is the number of sampling
                        points.
 
         Returns:
 
           G            An array G[N] of Gibbs energy values.
         """
-        assert set(endmem)<=set(self.endmembers), f'Error: Not all endmembers {endmem} are included in liquid {self.name}'
+        assert set(compon)<=set(self.components), f'Error: Not all components {compon} are included in liquid {self.name}'
         if len(x.shape)==1:
             x = np.array([x,])
         assert len(x.shape)==2, 'Error: x must be an array x[N,M].'
-        assert len(endmem)==x.shape[-1], 'Error: The number of endmem must equal the x.shape[1].'
-        M   = len(self.endmembers)
+        assert len(compon)==x.shape[-1], 'Error: The number of components must equal the x.shape[1].'
+        M   = len(self.components)
         N   = x.shape[0]
         idx = []
-        for e in endmem:
-            idx.append(np.where(self.endmembers==e)[0][0])
+        for e in compon:
+            idx.append(np.where(self.components==e)[0][0])
         xx  = np.zeros((N,M))
-        for i in range(len(endmem)):
+        for i in range(len(compon)):
             xx[:,idx[i]] = x[:,i]
         if self.kwforGfunc is not None:
             G   = self.Gfunc(xx,**self.kwforGfunc)
@@ -155,13 +162,13 @@ class PhaseHull(object):
     basic classifications of the simplices. It does not contain any physical/chemical data. All that has
     to be provided as arguments to this class.
     """
-    def __init__(self,endmembers,crystals=None,liquids=None,T=None,P=None,nres0=30,nrefine=4,nfact=2,nspan=2, \
+    def __init__(self,components,crystals=None,liquids=None,T=None,P=None,nres0=30,nrefine=4,nfact=2,nspan=2, \
                  min_nr_tielines=2,nocompute=False,incl_ptnames=False,incl_xvals=True,incl_Gvals=True,        \
                  incl_Gcen=False,incl_xcen=False,incl_xtie=False,mrcrit=10.):
         """
         Arguments:
 
-          endmembers   List of names of the endmembers in the correct order
+          components   List of names of the components in the correct order
                        in which they are in the x fractional composition vector
                        to be used.
 
@@ -221,7 +228,7 @@ class PhaseHull(object):
           This is a dictionary containing a set of arrays/lists of length N (one value for each simplex).
           These arrays or lists are:
 
-            simplices['x']          np.array((N,nendm,nendm)) where nendm is the number of endmembers, 
+            simplices['x']          np.array((N,ncomp,ncomp)) where ncomp is the number of components, 
                                     such that simplices['x'].sum(axis=-1)==1. The last index is 
                                     therefore the index of the coordinates. The middle index counts
                                     the corners of the simplex, and the first index is, as said above,
@@ -235,11 +242,11 @@ class PhaseHull(object):
                                     not all Qhull simplices are included here, because Qhull also
                                     returned the simplices at the top (rather than the bottom) of the
                                     convex hull.
-            simplices['ipts']       np.array((N,nendm)) of the indices of the points at the corners. 
+            simplices['ipts']       np.array((N,ncomp)) of the indices of the points at the corners. 
                                     The coordinates of the points can be found in PhaseHull.thepoints[-1].
-            simplices['G']          np.array((N,nendm)) of the G values at the corners. Only if
+            simplices['G']          np.array((N,ncomp)) of the G values at the corners. Only if
                                     incl_Gvals is set.
-            simplices['neighbors']  np.array((N,nendm)) of the indices of the neighboring simplices.
+            simplices['neighbors']  np.array((N,ncomp)) of the indices of the neighboring simplices.
                                     A neighbor shares a face with another simplex.
 
           Sometimes there may be fewer or more contents than these. With simplices.keys() you can
@@ -266,23 +273,36 @@ class PhaseHull(object):
           PhaseHull.reset(T,P)
 
         which then also automatically starts the computation, unless you set nocompute=True as keyword.
+
+        IMPORTANT NOTE:
+
+          So far (16 Sep 2025) only up to ternary phase diagrams have been thorougly
+          tested. Not sure if all simplex types are complete for higher order
+          systems. This may need some additional work.
         """
         self.mrcrit       = mrcrit
-        self.endmembers   = endmembers
-        self.nendmembers  = len(endmembers)
-        #self.tieline_types= ['inmisc_liquids','cryst_1_liq_1','cryst_1_liq_2','cryst_1_liq_3']
+        self.components   = components
+        self.ncomponents  = len(components)
+        self.ncomp        = 0
+        self.nsol         = 0
+        self.nliq         = 0
         self.tieline_types= ['tieline_c0l2','tieline_c0l3','tieline_c1l2','tieline_c1l3']
-        if self.nendmembers>3:
-            print('Note: At this moment the tie line identification has not been tested for nr of endmembers>3.')
+        if self.ncomponents>3:
+            print('Note: At this moment the tie line identification has not been tested for nr of components>3.')
         if crystals is not None:
+            self.nsol = len(crystals.dbase)
             if type(crystals) is not list:
-                crystals      = [crystals]
+                # Note: The fact that also the crystals are a list is a relic. In hindsight not necessary
+                crystals  = [crystals]
         else:
             crystals      = []
         self.crystals     = crystals
         if liquids is not None:
             if type(liquids) is not list:
-                liquids       = [liquids]
+                # Liquids must be a list of liquids, because you can have multiple ones
+                # (e.g. true liquid and a vapor phase, or true liquid and a solid solution).
+                liquids   = [liquids]
+            self.nliq     = len(liquids)
         else:
             liquids       = []
         self.liquids      = liquids
@@ -340,7 +360,7 @@ class PhaseHull(object):
         self.thesimplices = []
         self.do_all_refinement_steps()
         self.get_tie_lines_simplices()
-        if self.nendmembers==3:
+        if self.ncomponents==3:
             self.get_tie_line_groups()
         if len(self.crystals)>0:
             self.find_stable_crystals()
@@ -374,12 +394,12 @@ class PhaseHull(object):
         for ilevel in range(len(self.thesimplices)):  # The refinement levels
             simplices = self.thesimplices[ilevel]
             indices   = {}
-            for idim in range(1,self.nendmembers+1):    # The indices based on points, line ribbons, triangle walls, tetrads etc.
+            for idim in range(1,self.ncomponents+1):    # The indices based on points, line ribbons, triangle walls, tetrads etc.
                 indices[idim] = {}
                 for isim in range(len(simplices['id'])):
                     ipts = simplices['ipts']
-                    if idim<self.nendmembers:
-                        walls = self.get_walls(ipts[isim],depth=self.nendmembers-idim)
+                    if idim<self.ncomponents:
+                        walls = self.get_walls(ipts[isim],depth=self.ncomponents-idim)
                         for index in walls:
                             if index in indices[idim]:
                                 indices[idim][index].append(isim)
@@ -481,7 +501,7 @@ class PhaseHull(object):
         """
         simplices  = self.thesimplices[-1]
         nsim       = len(simplices['id'])
-        nendm      = simplices['x'][0].shape[-1]
+        #ncomp      = simplices['x'][0].shape[-1]
         iselection = []
         simindices = set()
         simplices['neighbors_'+stype] = [None for _ in range(nsim)]
@@ -627,7 +647,7 @@ class PhaseHull(object):
         will thus be exact neighbors, which can be identified as such. This is done with the
         function self.sort_tie_lines().
         """
-        assert self.nendmembers==3, 'Error: get_tie_line_groups() only works for ternary diagrams.'
+        assert self.ncomponents==3, 'Error: get_tie_line_groups() only works for ternary diagrams.'
         self.tie_line_groups       = {}
         for stype in self.tie_line_simplices:
             self.tie_line_groups[stype] = []
@@ -639,7 +659,7 @@ class PhaseHull(object):
     def get_x_values_of_tie_lines(self,stypes=None,stride=1):
         if stypes is None:
             stypes = self.tieline_types
-        assert self.nendmembers==3, 'Error: get_x_values_of_tie_lines() only works for ternary diagrams.'
+        assert self.ncomponents==3, 'Error: get_x_values_of_tie_lines() only works for ternary diagrams.'
         xx = {}
         for stype in stypes:
             if stype in self.tie_line_groups:
@@ -668,7 +688,7 @@ class PhaseHull(object):
         """
         if stypes is None:
             stypes = self.tieline_types
-        assert self.nendmembers==3, 'Error: get_x_values_of_binodal_curves() only works for ternary diagrams.'
+        assert self.ncomponents==3, 'Error: get_x_values_of_binodal_curves() only works for ternary diagrams.'
         xb = {}
         for stype in stypes:
             if stype in self.tie_line_groups:
@@ -783,14 +803,14 @@ class PhaseHull(object):
         xx    = []
         for ipts in iptss:
             if smooth:
-                x        = np.zeros((len(ipts)+1,self.nendmembers))
+                x        = np.zeros((len(ipts)+1,self.ncomponents))
                 x[0,:-1] = xpts[ipts[0]][:-1]
                 for i in range(len(ipts)-1):
                     x[i+1,:-1] = 0.5 * ( xpts[ipts[i]][:-1] + xpts[ipts[i+1]][:-1] )
                 x[-1,:-1] = xpts[ipts[-1]][:-1]
                 x[:,-1] = 1-x[:,:-1].sum(axis=-1)
             else:
-                x     = np.zeros((len(ipts),self.nendmembers))
+                x     = np.zeros((len(ipts),self.ncomponents))
                 for i in range(len(ipts)):
                     x[i,:-1] = xpts[ipts[i]][:-1]
                 x[:,-1] = 1-x[:,:-1].sum(axis=-1)
@@ -799,28 +819,28 @@ class PhaseHull(object):
 
     def complete_x(self,x):
         """
-        If x is (or maybe is) only the first n-1 elements where n is the number of endmembers,
-        then this function will return a new x that contains the complete set of endmembers
+        If x is (or maybe is) only the first n-1 elements where n is the number of components,
+        then this function will return a new x that contains the complete set of components
         that sums up to 1. Note that x can either be one vector of an array of vectors.
 
         Arguments:
 
-          x      The x vector x[0:nendmembers-1] or array of vectors x[0:nx,0:nendmembers-1]
+          x      The x vector x[0:ncomponents-1] or array of vectors x[0:nx,0:ncomponents-1]
 
         Returns:
 
-          x      The x vector x[0:nendmembers] or array of vectors x[0:nx,0:nendmembers], such
+          x      The x vector x[0:ncomponents] or array of vectors x[0:nx,0:ncomponents], such
                  that x.sum(axis=-1)==1.
         """
         if type(x) is list: x=np.array(x)
-        if x.shape[-1]==self.nendmembers-1:
+        if x.shape[-1]==self.ncomponents-1:
             if len(x.shape)==2:
                 nx   = x.shape[0]
             elif len(x.shape)==1:
                 nx   = 1
             else:
                 raise ValueError('Error: Dimensions of x are somehow wrong. Must be a 1D array of x vectors.')
-            xnew = np.zeros((nx,self.nendmembers))
+            xnew = np.zeros((nx,self.ncomponents))
             xnew[:,:-1] = x[:,:]
             xnew[:,-1]  = 1-x.sum(axis=-1)
             x = xnew
@@ -850,7 +870,7 @@ class PhaseHull(object):
             liquidus_ipts    A list of lists of indices of the points along the
                              liquidus curve. The last one is equal to the first
                              one, to show that the curve is closed.
-            liquidus_x       A list of lists of x[0:nendmember] vectors, also here
+            liquidus_x       A list of lists of x[0:ncomponent] vectors, also here
                              the last in the list equals the first, making it easier
                              to plot a closed curve or polygon.
 
@@ -859,7 +879,7 @@ class PhaseHull(object):
         """
         simplices = self.thesimplices[-1]
         isims     = self.select_simplices_of_a_given_kind('liquid')
-        nface     = self.nendmembers-1
+        nface     = self.ncomponents-1
         liquidus_walls  = []
         ## liquidus_edges  = [] # Something for ternary liquidi
         for isim in isims:
@@ -873,10 +893,10 @@ class PhaseHull(object):
                 if simplices['stype'][ineigh]!='liquid':
                     # Neighbor with a non-fluid simplex == liquidus wall
                     liquidus_walls.append(tpts)
-            if len(simplices['neighbors'][isim])<self.nendmembers:
+            if len(simplices['neighbors'][isim])<self.ncomponents:
                 # Some walls are at the edge of the domain
                 dummy = []
-                for i in range(self.nendmembers):
+                for i in range(self.ncomponents):
                     l = list(simplices['ipts'][isim]).copy()
                     l.remove(l[i])
                     l.sort()
@@ -892,7 +912,7 @@ class PhaseHull(object):
         for c in chains:
             cn   = np.stack(c)
             ipts = np.hstack((cn[0,0],cn[:,1],cn[0,0]))
-            x    = np.zeros((len(ipts),self.nendmembers))
+            x    = np.zeros((len(ipts),self.ncomponents))
             for i in range(len(ipts)):
                 x[i,:-1] = xpts[ipts[i]]
             x[:,-1] = 1-x[:,:-1].sum(axis=-1)
@@ -902,27 +922,27 @@ class PhaseHull(object):
         self.liquidus_x     = liquidus_x
         return liquidus_ipts,liquidus_x
 
-    def define_a_relevelling_plane(self,endmembers=None,useliq=False,x=None,G=None):
+    def define_a_relevelling_plane(self,components=None,useliq=False,x=None,G=None):
         """
-        The Gibbs free energy landscape is generally on a "steep slope" because the endmembers
+        The Gibbs free energy landscape is generally on a "steep slope" because the components
         typically have very different Delta_f G. The Gibbs energies of the intermediate composition
         phases or phase-combinations are, typically, only slightly below the surface spanned by the
-        endmembers. This makes it hard to analyze. The self.define_a_relevelling_plane() allows you 
+        components. This makes it hard to analyze. The self.define_a_relevelling_plane() allows you 
         to pre-define the function self.get_G_plane(x) that returns the G values of a plane going
-        through the endmembers (or through any set of len(endmembers) pairs of x and G) so that
+        through the components (or through any set of len(components) pairs of x and G) so that
         you can (for plotting, for instance) subtract those values from the G values obtained
-        from the PhaseHull algorithm. In this way, these new Gibbs energies are 0 at the endmembers
+        from the PhaseHull algorithm. In this way, these new Gibbs energies are 0 at the components
         (or the set of X,G pairs given), and (likely/mostly) <0 between them, giving a much clearer
-        view of the Gibbs free energy landscape within the simplex spanned by the endmembers (or
+        view of the Gibbs free energy landscape within the simplex spanned by the components (or
         set of x,G pairs). Only for convenience.
 
         Arguments (either/or):
 
-          endmembers      If set, the endmembers to use to define the plane.
-          useliq          If set, use the endmembers of the liquids, not those of the crystals
+          components      If set, the components to use to define the plane.
+          useliq          If set, use the components of the liquids, not those of the crystals
                           to define the plane.
 
-          x, G            If set, the set of len(endmembers) to use to define the plane.
+          x, G            If set, the set of len(components) to use to define the plane.
 
         Returns:
 
@@ -930,41 +950,41 @@ class PhaseHull(object):
           on that plane, which you can subtract from the G values you get from the PhaseHull()
           algorithm.
         """
-        if endmembers is not None:
-            assert x is None and G is None, 'Error: Cannot set both endmembers and x,G'
-            nendm = len(endmembers)
-            x = np.zeros(nendm)
-            G = np.zeros(nendm)
+        if components is not None:
+            assert x is None and G is None, 'Error: Cannot set both components and x,G'
+            ncomp = len(components)
+            x = np.zeros(ncomp)
+            G = np.zeros(ncomp)
             if useliq:
                 liq = self.liquids[-1]
-                for i in range(nendm):
+                for i in range(ncomp):
                     x[:] = 0
                     x[i] = 1.
-                    G[i] = liq.call_Gfunc(endmembers,x[i,:])
+                    G[i] = liq.call_Gfunc(components,x[i,:])
             else:
                 cryst = self.crystals[-1]
                 db    = cryst.dbase
-                iendmembers,Gzero = self.identify_endmember_minerals(db,endmembers)
+                icomponents,Gzero = self.identify_component_minerals(db,components)
                 Gzero = np.array(Gzero)
             self.relevel_G = Gzero
         else:
-            assert x is not None and G is not None, 'Error: You must set either endmembers or x,G'
+            assert x is not None and G is not None, 'Error: You must set either components or x,G'
             from scipy import linalg
             x     = np.array(x)
             G     = np.array(G)
-            nendm = x.shape[-1]
-            evec  = np.zeros((nendm-1,nendm-1))
-            for i in range(nendm-1):
+            ncomp = x.shape[-1]
+            evec  = np.zeros((ncomp-1,ncomp-1))
+            for i in range(ncomp-1):
                 evec[:,i] = x[i,:-1]-x[-1,:-1]
             einv     = linalg.inv(evec)
-            xx       = np.zeros([nendm,nendm])
-            for i in range(nendm):
+            xx       = np.zeros([ncomp,ncomp])
+            for i in range(ncomp):
                 xx[i,i] = 1.
-            y        = np.zeros([nendm,nendm])
-            y[:,:-1] = (einv[None,:,:]*(xx[:,None,:-1]-xx[-1,None,:-1])).sum(axis=-1)
+            y        = np.zeros([ncomp,ncomp])
+            y[:,:-1] = (einv[None,:,:]*(xx[:,None,:-1]-x[-1,None,:-1])).sum(axis=-1)
             y[:,-1]  = 1-y[:,:-1].sum(axis=-1)
-            Gzero    = np.zeros(nendm)
-            for i in range(nendm):
+            Gzero    = np.zeros(ncomp)
+            for i in range(ncomp):
                 Gzero += y[:,i]*G[i]
             self.relevel_G = Gzero
 
@@ -972,17 +992,17 @@ class PhaseHull(object):
         """
         After calling define_a_relevelling_plane() you can use G_relevelling_plane(x) to obtain
         the G value of this plane at any point x. By subtracting this from the G values you obtain
-        from the PhaseHull() algorithm, you get "re-levelled G values", where the endmembers have
+        from the PhaseHull() algorithm, you get "re-levelled G values", where the components have
         G=0. 
         """
-        if x.shape[-1] == len(self.endmembers)-1:
+        if x.shape[-1] == len(self.components)-1:
             xx = x
             sh = list(xx.shape)
             sh[-1] += 1
             x  = np.zeros(sh)
             x[...,:-1] = xx[...,:]
             x[...,-1]  = 1-xx[...,:].sum(axis=-1)
-        assert x.shape[-1] == len(self.endmembers), 'Error: Dimension of x incorrect'
+        assert x.shape[-1] == len(self.components), 'Error: Dimension of x incorrect'
         if hasattr(self,'relevel_G'):
             if len(x.shape)==1:
                 return (self.relevel_G*x).sum()
@@ -993,7 +1013,7 @@ class PhaseHull(object):
 
     # ------ Inner working stuff for PhaseHull -----
 
-    def call_Gfunctions(self,endmembers,x):
+    def call_Gfunctions(self,components,x):
         """
         PhaseHull can handle multiple continua, for instance liquid and solid metal alloy. When these functions
         are called, the lowest of the continua is taken at any point x. Also the id-number of this continuum
@@ -1001,7 +1021,7 @@ class PhaseHull(object):
 
         Argument:
 
-          endmembers   List of names of the endmembers in the correct order
+          components   List of names of the components in the correct order
                        in which they are in x.
 
           x            The fractional abundances. x can be a 2D array x[N,M].
@@ -1023,7 +1043,7 @@ class PhaseHull(object):
         # as an alloy).
         
         for iliq in range(len(self.liquids)):
-            G.append(self.liquids[iliq].call_Gfunc(endmembers,x))  # Call the function that computes G
+            G.append(self.liquids[iliq].call_Gfunc(components,x))  # Call the function that computes G
             idl.append(-iliq-1)                                    # Store the ID of this liquid
         G    = np.stack(G).T
         imin = G.argmin(axis=-1)                 # Determine which of the liquids has the lowest G
@@ -1044,7 +1064,7 @@ class PhaseHull(object):
         stoichiometry, hence they have a Gibbs energy at all (or a continuous
         subspace) of the x phase space.
         """
-        pts = np.zeros((len(Ggrid),self.nendmembers))
+        pts = np.zeros((len(Ggrid),self.ncomponents))
         ids = np.zeros((len(Ggrid)),dtype=int)
         for i in range(len(Ggrid)):
             pts[i,:-1] = xgrid[i][:-1].copy()    # For the convex hull we only need the independent x values, hence [:-1]
@@ -1061,15 +1081,15 @@ class PhaseHull(object):
         the corresponding points for the convex hull algorithm.
 
         Note that we use mfDfG, not DfG here. The reason is that from one
-        mole of endmembers, you do not always get 1 mole of crystal. Example
+        mole of components, you do not always get 1 mole of crystal. Example
         from half a mole of MgO and half a mole of SiO2 (in total these
-        comprise 1 mole of endmembers) you get only half a mole of MgSiO3.
+        comprise 1 mole of components) you get only half a mole of MgSiO3.
         So we should use 0.5 times the Gibbs energy of MgSiO3. This is
         what mfDfG is, in relation to DfG. 
         """
         pts   = []
         ids   = []
-        nendm = len(self.endmembers)
+        ncomp = len(self.components)
 
         # Not always we have such fixed-composition minerals
         
@@ -1080,14 +1100,14 @@ class PhaseHull(object):
             assert len(self.crystals)==1, 'Error: At the moment, only one crystal database is allowed.'
             mdb       = self.crystals[0].dbase
 
-            # At the endmember locations only 1 crystal is allowed, so pick the lowest energy one
+            # At the component locations only 1 crystal is allowed, so pick the lowest energy one
 
-            mdb       = self.remove_non_lowest_endmembers_from_db(mdb)
+            mdb       = self.remove_non_lowest_components_from_db(mdb)
 
             # Loop over all remaining crystals
             
             for i,row in mdb.iterrows():
-                pt    = np.zeros(nendm)
+                pt    = np.zeros(ncomp)
                 pt[:-1] = row['x'][:-1]   # For the convex hull we only need the independent x values, hence [:-1]
                 pt[-1]  = row['mfDfG']    # The last value of the point coordinates is the G value, weighted by moles
                 pts.append(pt)
@@ -1095,7 +1115,7 @@ class PhaseHull(object):
                 ids.append(name)
         return pts,ids
 
-    def remove_non_lowest_endmembers_from_db(self,mdb):
+    def remove_non_lowest_components_from_db(self,mdb):
         """
         Sometimes, if the crystal database contains multiple crystals at (1,0,0)
         or another corner point, then Qhull finds simplices connecting both
@@ -1105,14 +1125,14 @@ class PhaseHull(object):
         """
         mdb   = mdb.reset_index(drop=True)
         iincl = list(np.arange(len(mdb)))
-        for k in range(self.nendmembers):
+        for k in range(self.ncomponents):
             ii = []
             GG = []
             for i,m in mdb.iterrows():
                 if m['x'][k]==1:
                     ii.append(i)
                     GG.append(m['mfDfG'])
-            assert len(ii)>0, f'No Endmember found in direction {k}'
+            assert len(ii)>0, f'No Component found in direction {k}'
             ikeep = ii[np.argmin(GG)]
             for i in ii:
                 if i!=ikeep:
@@ -1163,7 +1183,7 @@ class PhaseHull(object):
             self.xgrids.append(xgrid)
             Ggrid             = []
             for x in xgrid:
-                Ggrid.append(self.call_Gfunctions(self.endmembers,x))
+                Ggrid.append(self.call_Gfunctions(self.components,x))
             pts_liq,ids_liq = self.create_points_for_liquids(xgrid,Ggrid)
             self.thepoints_liq.append(pts_liq)
             self.theids_liq.append(ids_liq)
@@ -1192,24 +1212,24 @@ class PhaseHull(object):
     def make_integer_grid(self,nres):
         """
         The function that constructs the base grid in integer form. Note
-        that for 3 enmembers the grid is triangular, for 4 endmembers
+        that for 3 enmembers the grid is triangular, for 4 components
         the grid is a tetrad, etc. The integer grid is constructed in
         a way that the full allowed space is uniformly mapped with
         nres points along each axis. 
         """
         ixgrid = set()
-        if self.nendmembers==2:
+        if self.ncomponents==2:
             for ix0 in range(0,nres+1):
                 if ix0>=0 and ix0<=nres:
                     k = nres - ix0
                     ixgrid.add((ix0,k))
-        elif self.nendmembers==3:
+        elif self.ncomponents==3:
             for ix0 in range(0,nres+1):
                 for ix1 in range(0,nres+1):
                     if ix0>=0 and ix1>=0 and ix0+ix1<=nres:
                         k = nres - ix0 - ix1
                         ixgrid.add((ix0,ix1,k))
-        elif self.nendmembers==4:
+        elif self.ncomponents==4:
             for ix0 in range(0,nres+1):
                 for ix1 in range(0,nres+1):
                     for ix2 in range(0,nres+1):
@@ -1217,7 +1237,7 @@ class PhaseHull(object):
                             k = nres - ix0 - ix1 - ix2
                             ixgrid.add((ix0,ix1,ix2,k))
         else:
-            raise ValueError(f'Unfortunately at the moment we cannot handle nr of endmembers = {self.nendmembers}')
+            raise ValueError(f'Unfortunately at the moment we cannot handle nr of components = {self.ncomponents}')
         ixgrid = list(ixgrid)
         ixgrid.sort()
         ixgrid = np.array(ixgrid)
@@ -1326,7 +1346,7 @@ class PhaseHull(object):
     def do_all_refinement_steps(self):
         #print(f'First low resolution calculation at dx = 1/{self.nres0}')
         self.do_convex_hull_algorithm(0)
-        if (len(self.liquids)>0) and len(self.endmembers)>2:
+        if (len(self.liquids)>0) and len(self.components)>2:
             for iter in range(self.nrefine):
                 self.do_one_refinement_step()
 
@@ -1344,7 +1364,7 @@ class PhaseHull(object):
     
           pts       The points in [x[:-1],mfDfG]-space. Pts is an array
                     with dimensions [npoints,N], where N is the number of
-                    endmembers. But of these N elements, only N-1 are x
+                    components. But of these N elements, only N-1 are x
                     values, because the last x can be found from the
                     sum to unity condition: x[-1]=1-x[:-1].sum(). This
                     frees up space for the Gibbs free energy as the
@@ -1420,7 +1440,7 @@ class PhaseHull(object):
     
           pts       The points in [x[:-1],mfDfG]-space. Pts is an array
                     with dimensions [npoints,N], where N is the number of
-                    endmembers. But of these N elements, only N-1 are x
+                    components. But of these N elements, only N-1 are x
                     values, because the last x can be found from the
                     sum to unity condition: x[-1]=1-x[:-1].sum(). This
                     frees up space for the Gibbs free energy as the
@@ -1439,13 +1459,19 @@ class PhaseHull(object):
         Returns:
     
           simplices     A list of dicts with information for each simplex.
+
+        IMPORTANT NOTE:
+
+          So far (16 Sep 2025) only up to ternary phase diagrams have been thorougly
+          tested. Not sure if all simplex types are complete for higher order
+          systems. This may need some additional work.
         """
         if mrcrit is None: mrcrit=self.mrcrit
         if hasattr(self,'gridsnres'):
             nx = self.gridsnres[-1]
         pts   = np.stack(pts)
         npts  = len(pts)
-        nendm = pts.shape[-1]
+        ncomp = pts.shape[-1]
         simplices = {'id':[],'id_qhull':[],'stype':[],'ipts':[],'neighbors_qhull':[]}
         if self.incl_ptnames:
             simplices['ptnames'] = []
@@ -1500,7 +1526,7 @@ class PhaseHull(object):
 
                 # Since the x values of these points are only
                 # the independent x values (one fewer than the
-                # number of endmembers), we reconstruct the full
+                # number of components), we reconstruct the full
                 # x values using x[last] = 1 - sum x[all but last].
 
                 xx        = np.zeros((len(x),len(x[0])+1))
@@ -1533,9 +1559,9 @@ class PhaseHull(object):
                         inmisc        = self._test_if_simplex_is_inmiscible_fluids(pts,isimnew,simplices['ipts'],nx=nx,return_all=False)
                         mr            = None
                     if(inmisc):                                  # If we are in an inmiscibility part of the liquid, 
-                        nliq  = self.nendmembers                 # then do some more work.
+                        nliq  = self.ncomponents                 # then do some more work.
                         stype = f'tieline_c0l{nliq}'             # Normally if a liquid has inmiscibility, the simplex is a tie line
-                        if mr is not None and self.nendmembers==3:
+                        if mr is not None and self.ncomponents==3:
                             if mr>mrcrit:                        # In a ternary one can also have inmiscibility of three compositions.
                                 stype = 'inmisc_liquids_3phase'  # This is a bit tricky to find: we use the shape of the simplex.
                         # Check if this simplex connects different liquids (if you have more than 1 continuum)
@@ -1553,7 +1579,7 @@ class PhaseHull(object):
                             ncryst += 1
                         else:
                             nliq   += 1
-                    if self.nendmembers>2:
+                    if self.ncomponents>2:
                         if self._test_if_simplex_is_tie_line(pts,isimnew,simplices['ipts']):
                             simplices['stype'].append(f'tieline_c{ncryst}l{nliq}')
                         else:
@@ -1594,7 +1620,7 @@ class PhaseHull(object):
         # from its corner points) below the true liquid G function, then
         # this simplex is a tie line or tie simplex of inmiscible liquids.
         # This is what is tested here.
-        N   = len(pts[0])                                          # Nr of endmembers 
+        N   = len(pts[0])                                          # Nr of components 
         npt = len(pts)                                             # Nr of points available (not all are part of the convex hull)
         x   = np.zeros((N+1,N))                                    # Molar fractions of the corner points of this simplex
         for i in range(N):
@@ -1602,7 +1628,7 @@ class PhaseHull(object):
             x[i,-1]  = 1-x[i,:-1].sum(axis=-1)
         x[-1,:] = x[0,:]                                           # Copy the first x to the extra x, useful for the algorithm
         xcen = x[:-1,:].mean(axis=0)                               # The center of this simplex
-        Gcont,idcont = self.call_Gfunctions(self.endmembers,xcen)  # Compute the real G at this center
+        Gcont,idcont = self.call_Gfunctions(self.components,xcen)  # Compute the real G at this center
         Gcen = 0.                                                  # Now compute the mean of the G values at the corners of the simplex
         for i in range(N):
             Gcen += pts[sim_ipts[isimnew][i]][-1]
@@ -1619,7 +1645,7 @@ class PhaseHull(object):
 
     def _test_if_simplex_is_tie_line(self,pts,isimnew,sim_ipts,mrcrit=None,nx=None):
         if mrcrit is None: mrcrit=self.mrcrit
-        assert self.nendmembers>2, 'Internal Error: Should not call _test_if_simplex_is_tie_line for binaries'
+        assert self.ncomponents>2, 'Internal Error: Should not call _test_if_simplex_is_tie_line for binaries'
         if nx is None:
             if hasattr(self,'gridsnres'):
                 nx = self.gridsnres[-1]
@@ -1642,7 +1668,7 @@ class PhaseHull(object):
     def refine_near_binodals_2d(self,pts,simplices,nx,nfact=2,nspan=1,return_newnx=False):
         eps      = 1e-3
         nend     = len(pts[0])
-        assert nend==3, 'Error: refine_near_binodals_2d() only works with 3 endmembers.'
+        assert nend==3, 'Error: refine_near_binodals_2d() only works with 3 components.'
         tie_lines = []
         for isim in range(len(simplices['id'])):
             #
@@ -1676,7 +1702,7 @@ class PhaseHull(object):
         Gnew     = np.zeros(len(grnew))
         idsnew   = np.zeros(len(grnew),dtype=int)
         for i in range(len(grnew)):
-            Gnew[i],idsnew[i] = self.call_Gfunctions(self.endmembers,xnew[i])
+            Gnew[i],idsnew[i] = self.call_Gfunctions(self.components,xnew[i])
         ptsnew   = xnew
         ptsnew[:,-1] = Gnew[:]
         if return_newnx:
@@ -1772,42 +1798,42 @@ class PhaseHull(object):
                 xprev  = xcurr
         return groups
 
-    def identify_endmember_minerals(self,mdb,endmembers):
+    def identify_component_minerals(self,mdb,components):
         """
         This function determines which of the crystals in the mineral database
-        are the true endmembers with the lowest DfG.
+        are the true components with the lowest DfG.
 
         Arguments:
 
           mdb              The mineral database (see read_minerals_and_liquids())
-          endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+          components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
 
         Returns:
 
-          iendmembers      List of integer indices of the mdb database pointing to the true
-                           endmembers. If the mdb database has different versions of the endmembers
+          icomponents      List of integer indices of the mdb database pointing to the true
+                           components. If the mdb database has different versions of the components
                            (e.g. alpha-quartz or beta-quartz for SiO2), then the version is
                            picked that has (for the given T) the smallest value of DfG.
-          DfGendmembers    List of DfG values of these endmembers.
+          DfGcomponents    List of DfG values of these components.
           
         """
-        iendmembers   = np.zeros(len(endmembers),dtype=int)
-        DfGendmembers = np.zeros(len(endmembers))+1e90
-        for k,e in enumerate(endmembers):
+        icomponents   = np.zeros(len(components),dtype=int)
+        DfGcomponents = np.zeros(len(components))+1e90
+        for k,e in enumerate(components):
             ms = mdb[mdb['Formula']==e]
-            assert(len(ms)>0), f'Error: Could not find endmember mineral {e} among minerals'
+            assert(len(ms)>0), f'Error: Could not find component mineral {e} among minerals'
             DfG  = 1e90
             iend = -1
             for i,row in ms.iterrows():
                 if(row['DfG']<DfG):
                     iend = i
                     DfG  = row['DfG']
-            assert i>-1, f'Error: Could not find endmember mineral {e} among minerals (stranger version)'
-            iendmembers[k]   = iend
-            DfGendmembers[k] = DfG
-        return iendmembers,DfGendmembers
+            assert i>-1, f'Error: Could not find component mineral {e} among minerals (stranger version)'
+            icomponents[k]   = iend
+            DfGcomponents[k] = DfG
+        return icomponents,DfGcomponents
 
-    def convert_mole_fraction_into_mass_fraction(self,endmemmass,x,G=None):
+    def convert_mole_fraction_into_mass_fraction(self,componmass,x,G=None):
         """
         If you have a mole fraction x (such that x.sum(axis=-1)==1), or an array
         of them (again such that x.sum(axis=-1)==1, so x[...,:]), then you can
@@ -1816,7 +1842,7 @@ class PhaseHull(object):
 
         Arguments;
 
-          endmemmass       List of the masses (in atomic units) of the endmembers.
+          componmass       List of the masses (in atomic units) of the components.
           x                Mole fraction x values. E.g. x = np.array([0.2,0.3,0.5]) or an
                            array of them, e.g. x = np.array([[0.2,0.3,0.5],[0.1,0.4,0.5]])
 
@@ -1835,23 +1861,23 @@ class PhaseHull(object):
           Gm               If G was passed on, this is the new version of G in
                            units of J/mass.
         """
-        nendm = len(endmemmass)
+        ncomp = len(componmass)
         if len(x.shape)==1:
             mtot = 0.
         else:
             mtot = np.zeros_like(x[...,0])
-        for k in range(nendm):
-            mtot += x[...,k]*endmemmass[k]
+        for k in range(ncomp):
+            mtot += x[...,k]*componmass[k]
         xm = np.zeros_like(x)
-        for k in range(len(endmemmass)):
-            xm[...,k] = x[...,k]*endmemmass[k]/mtot
+        for k in range(len(componmass)):
+            xm[...,k] = x[...,k]*componmass[k]/mtot
         if G is not None:
             Gm = G/mtot
             return xm,mtot,Gm
         else:
             return xm,mtot
 
-    def convert_mass_fraction_into_mole_fraction(self,endmemmass,xmass,Gmass=None):
+    def convert_mass_fraction_into_mole_fraction(self,componmass,xmass,Gmass=None):
         """
         The inverse of convert_mole_fraction_into_mass_fraction().
 
@@ -1862,7 +1888,7 @@ class PhaseHull(object):
 
         Arguments;
 
-          endmemmass       List of the masses (in atomic units) of the endmembers.
+          componmass       List of the masses (in atomic units) of the components.
           xmass            Mass fraction x values. E.g. x = np.array([0.2,0.3,0.5]) or an
                            array of them, e.g. x = np.array([[0.2,0.3,0.5],[0.1,0.4,0.5]])
 
@@ -1881,17 +1907,17 @@ class PhaseHull(object):
           Gmol             If Gmass was passed on, this is the new version of G in
                            units of J/mol.
         """
-        nendm = len(endmemmass)
-        endmemmol = 1/np.array(endmemmass)
+        ncomp = len(componmass)
+        componmol = 1/np.array(componmass)
         if len(xmass.shape)==1:
             moltot = 0.
         else:
             moltot = np.zeros_like(xmass[...,0])
-        for k in range(len(iendmembers)):
-            moltot += xmass[...,k]*endmemmol[k]
+        for k in range(len(icomponents)):
+            moltot += xmass[...,k]*componmol[k]
         xmol = np.zeros_like(xmass)
-        for k in range(nendm):
-            xmol[...,k] = xmass[...,k]*endmemmol[k]/moltot
+        for k in range(ncomp):
+            xmol[...,k] = xmass[...,k]*componmol[k]/moltot
         if Gmass is not None:
             Gmol = Gmass/moltot
             return xmol,moltot,Gmol
@@ -1969,6 +1995,61 @@ class PhaseHull(object):
             chains.append(chain)
         return chains
 
+    def linear_interpolation_weights_in_simplex(self,x,xcorners,invert=True):
+        """
+        Given an x[:] vector and a simplex with corner points with
+        coordinates xcorners[:,:] such that xcorners[0,:] are
+        the coordinates of corner 0, xcorners[1,:] are
+        the coordinates of corner 1, etc. If you now want to
+        linearly interpolate something between the corners,
+        you need the linear interpolation weights w[:] such
+        that
+
+          interpolated_value  = (w[:]*corner_values[:]).sum()
+
+        This function computes these w[:]. But since x can be
+        a vector of multiple points, w will be w[:,:] instead.
+
+        Note that if one or more of these w coefficients is < 0,
+        then the x point lies outside of the simplex.
+
+        Options:
+
+          invert    If True, then invert the matrix, then apply
+                    this to x. Is better if x[:nx,:ncomp] has
+                    a large number of points (i.e. nx>>1).
+
+                    If False, then solve the matrix equation
+                    for each x[k] vector separately. Is better
+                    if nx is small but ncomp is large.
+        """
+        from scipy import linalg
+        ncomp = len(x)
+        assert ncomp==self.ncomponents, 'Nr of components not same as those of self'
+        if len(x.shape)==1: x = x.reshape((1,len(x)))
+        nx = len(x)
+        assert len(xcorners.shape)==2, 'xcorners must have 2 indices'
+        assert xcorners.shape[0]==ncomp, f'xcorners must be {ncomp}x{ncomp} in size'
+        assert xcorners.shape[1]==ncomp, f'xcorners must be {ncomp}x{ncomp} in size'
+        N = ncomp
+        assert np.all(np.abs(x.sum(axis=-1)-1)<1e-6), 'Error in linear interpolation on a simplex: x does not sum to 1'
+        for i in range(N):
+            assert np.abs(xcorners[i].sum()-1)<1e-6, f'Error in linear interpolation on a simplex: xcorners[{i}][:] does not sum to 1'
+        evec = np.zeros((N-1,N-1))
+        for i in range(N-1):
+            evec[:,i] = xcorners[i][:-1]-xcorners[-1][:-1]
+        w        = np.zeros([nx,ncomp])
+        if invert:
+            einv     = linalg.inv(evec)
+            w[:,:-1] = (einv[None,:,:]*(x[:,None,:-1]-xcorners[-1,None,:-1])).sum(axis=-1)
+            w[:,-1]  = 1-w[:,:-1].sum(axis=-1)
+        else:
+            for k in range(nx):
+                y = linalg.solve(evec,(x[k,:-1]-xcorners[-1][:-1]))
+                y = np.hstack((y,1-y.sum()))
+                w[k,:] = y
+        return w
+
     def find_simplex_for_given_x(self,x,return_G=False,ilevel=-1):
         """
         Given a value, or a list of values, of x, this function
@@ -1979,6 +2060,11 @@ class PhaseHull(object):
 
           x         Location x[0:N] or array of locations x[0:nx,0:N]
                     where the interpolation should be done.
+
+        Options:
+
+          return_G  If True, then also return the interpolated G
+                    value at the bottom of the convex hull
 
         Returns:
 
@@ -2007,12 +2093,24 @@ class PhaseHull(object):
             x = np.stack(x)
         if len(x.shape)==1:
             x = x[None,:]
+            
+        # NOTE FOR IMPROVEMENT: The three lines below are a bit
+        # dangerous, since they assume (presumably correctly, but
+        # not 100% guaranteed if later changes are made to the code)
+        # that the simplices in the self.thesimplices[ilevel] have
+        # exactly the same order as the selected nvec and offset
+        # from the original hull with the mask-selection. Better
+        # would be to store the nvec and offset directly in the
+        # two new columns of the self.thesimplices[ilevel], so that 
+        # confusion cannot happen.
+        # 2025-09-15
+        
         mask    = hull.equations[:,-2]<0     # Select bottom of the hull
         nvec    = hull.equations[mask,:-1]   # Normal vectors of the simplices (at bottom)
         offset  = hull.equations[mask,-1]    # Offset of simplices from origin (at bottom)
         if type(x) is list:
             x = np.stack(x)
-        N       = x.shape[-1]                # Nr of endmembers
+        N       = x.shape[-1]                # Nr of components
         nx      = x.shape[0]                 # Nr of x vectors to interpolate at
         ns      = len(offset)                # Nr of simplices at bottom of the hull
         heights = np.zeros((nx,ns))
@@ -2028,6 +2126,60 @@ class PhaseHull(object):
             return simid,G
         else:
             return simid
+
+    def make_component_name_list_for_big_X_vector(self,fullname=False):
+        # Create the list of component names, so that the resulting Xbig
+        # vector is easier to interpret.
+        if fullname:
+            col = 'Mineral'
+        else:
+            col = 'Abbrev'
+        self.bigX_component_names = []
+        if self.nsol>0:
+            for isol in range(self.nsol):
+                self.bigX_component_names.append(self.crystals[0].dbase[col].iloc[isol])
+        if self.nliq>0:
+            for iliq,liq in enumerate(self.liquids):
+                ilq0 = self.nsol+iliq*self.ncomponents
+                for iend in range(self.ncomponents):
+                    self.bigX_component_names.append(liq.name+'_'+self.components[iend])
+
+    def find_composition_for_given_x(self,x,simid=None,ilevel=-1):
+        """
+        Once you have the phase diagram, you may want to determine the actual
+        chemical composition of a material for a given component-composition x:
+        The fraction of each possible mineral from the self.crystals database,
+        and the amount of liquid (and the component-composition of the liquid) 
+        for each liquid from the self.liquids list. This is done with this
+        function. 
+        """
+        if not hasattr(self,'bigX_component_names'):
+            self.make_component_name_list_for_big_X_vector()
+        simplices = self.thesimplices[ilevel]
+        if simid is None:
+            simid = self.find_simplex_for_given_x(x,return_G=False,ilevel=ilevel)
+        else:
+            assert len(x)==len(simid), 'Error: Nr of simplex-indices unequal to nr of points'
+        nx      = x.shape[0]                               # Nr of x vectors to interpolate at
+        ncomp   = self.nsol + self.nliq*self.ncomponents   # Size of the Xbig vector
+        Xbig    = np.zeros((nx,ncomp))
+        for ix in range(nx):
+            xcorners = simplices['x'][simid[ix]]
+            ipts     = simplices['ipts'][simid[ix]]
+            #weight   = self.linear_interpolation_weights_in_simplex(x[ix],xcorners,invert=False)[0]
+            weight   = self.linear_interpolation_weights_in_simplex(x[ix],xcorners,invert=True)[0]
+            for iend in range(self.ncomponents):
+                idd  = self.theids[ilevel][ipts[iend]]
+                if type(idd) is str:
+                    # This corner point is a crystal
+                    k          = self.crystals[-1].index[idd]
+                    Xbig[ix,k] = weight[iend]
+                else:
+                    # This corner point is a liquid
+                    for iliq,liq in enumerate(self.liquids):
+                        ilq0 = self.nsol+iliq*self.ncomponents
+                        Xbig[ix,ilq0:ilq0+self.ncomponents] += weight[iend]*xcorners[iend,:]
+        return Xbig
 
     def map_phase_diagram(self,nres=100,ilevel=-1,colormap=None):
         simplices       = self.thesimplices[ilevel]

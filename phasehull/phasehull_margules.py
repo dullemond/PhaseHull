@@ -8,7 +8,7 @@
 #
 # The Margules parameters are the expansion coefficients of the polynomial
 # model of the interaction parameters for solid or liquid solutions of
-# endmembers. See Berman & Brown (1984) for a detailed description of
+# components. See Berman & Brown (1984) for a detailed description of
 # how they work.
 #
 # This module provides the infrastructure for reading, symmetrizing and
@@ -20,11 +20,11 @@
 # Berman PhD thesis use quaternary interaction WG[i,j,k,l]. To compare
 # them one should note that one can choose WG[i,j,k,l] in such a way
 # that they effectively are WG[i,k]: To do this, one should choose
-# for a pair of endmembers i,k:
+# for a pair of components i,k:
 #
 #    W[i,i,k,k] = 2*W[i,k,k,k] = 2*W[i,i,i,k] == 2*W[i,k]
 #
-# Conversely one could choose, for a pair of endmembers i,k
+# Conversely one could choose, for a pair of components i,k
 # three independent parameters: WikM, WikL, WikR, where
 #
 #    WijM == W[i,k]
@@ -50,9 +50,9 @@ import matplotlib.pyplot as plt
 from itertools import permutations
 
 class Margules(object):
-    def __init__(self,endmembers):
-        self.endmembers = endmembers
-        self.nendm      = len(endmembers)
+    def __init__(self,components):
+        self.components = components
+        self.ncomp      = len(components)
         self.Rgas       = 8.314  # J/mol·K
 
     def load_w(self,WH,WS=None,WV=None):
@@ -66,7 +66,7 @@ class Margules(object):
         Each of these three contributions are tensors of
         rank equal to the order of the polynomial expansion
         of the excess Gibbs of mixing due to interaction
-        between the mixed endmembers. 
+        between the mixed components. 
         """
         self.polyorder = len(WH.shape)
         if WS is None: WS = np.zeros_like(WH)
@@ -75,23 +75,23 @@ class Margules(object):
         self.WS = WS
         self.WV = WV
         if(self.polyorder==2):
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
                     self.symmetrize_w(WH,[i,j])
                     self.symmetrize_w(WS,[i,j])
                     self.symmetrize_w(WV,[i,j])
         elif(self.polyorder==3):
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
-                    for k in range(j,self.nendm):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
                         self.symmetrize_w(WH,[i,j,k])
                         self.symmetrize_w(WS,[i,j,k])
                         self.symmetrize_w(WV,[i,j,k])
         elif(self.polyorder==4):
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
-                    for k in range(j,self.nendm):
-                        for l in range(k,self.nendm):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
+                        for l in range(k,self.ncomp):
                             self.symmetrize_w(WH,[i,j,k,l])
                             self.symmetrize_w(WS,[i,j,k,l])
                             self.symmetrize_w(WV,[i,j,k,l])
@@ -106,62 +106,67 @@ class Margules(object):
         """
         return self.WH - T*self.WS + P*self.WV
         
-    def reduce_margules_to_subset(self,endmembers):
+    def reduce_margules_to_subset(self,components):
         """
         Sometimes you may wish to study a subset of the full ternary or
         quaternary (or higher-order) system, i.e., excluding one or more
-        endmembers. Or you may wish to reshuffle the order of the
-        endmembers (which comes first, second etc). Both can be done
+        components. Or you may wish to reshuffle the order of the
+        components (which comes first, second etc). Both can be done
         with this function.
     
         Arguments:
     
-          endmembers   A list of endmembers that you wish to select
+          components   A list of components that you wish to select
                        and you wish to reduce W to.
 
         """
-        nendm  = len(endmembers)
-        subset = np.zeros(nendm,dtype=int)-1
-        for k,e in enumerate(endmembers):
-            assert e in self.endmembers, f'Error: Endmember {e} not in Margules.'
-            for i in range(len(self.endmembers)):
-                if e==self.endmembers[i]: subset[k]=i
-        assert min(subset)>-1,'Error: Missing an endmember in the Margules'
+        ncomp  = len(components)
+        subset = np.zeros(ncomp,dtype=int)-1
+        for k,e in enumerate(components):
+            assert e in self.components, f'Error: Component {e} not in Margules.'
+            for i in range(len(self.components)):
+                if e==self.components[i]: subset[k]=i
+        assert min(subset)>-1,'Error: Missing a component in the Margules'
         subset = list(subset)
+
+        self.WH_orig = self.WH
+        self.WS_orig = self.WS
+        self.WV_orig = self.WV
+        self.components_orig = self.components
 
         WH = self.WH
         WS = self.WS
         WV = self.WV
 
         if(self.polyorder==2):
-            WHred = np.zeros((nendm,nendm))
-            WSred = np.zeros((nendm,nendm))
-            WVred = np.zeros((nendm,nendm))
-            for i in range(nendm):
-                for j in range(nendm):
+            WHred = np.zeros((ncomp,ncomp))
+            WSred = np.zeros((ncomp,ncomp))
+            WVred = np.zeros((ncomp,ncomp))
+            for i in range(ncomp):
+                for j in range(ncomp):
                     s          = [subset[i],subset[j]]
                     WHred[i,j] = WH[s[0],s[1]]
                     WSred[i,j] = WS[s[0],s[1]]
                     WVred[i,j] = WV[s[0],s[1]]
         elif(self.polyorder==3):
-            WHred = np.zeros((nendm,nendm,nendm))
-            WSred = np.zeros((nendm,nendm,nendm))
-            WVred = np.zeros((nendm,nendm,nendm))
-            for i in range(nendm):
-                for j in range(nendm):
-                    for k in range(nendm):
+            WHred = np.zeros((ncomp,ncomp,ncomp))
+            WSred = np.zeros((ncomp,ncomp,ncomp))
+            WVred = np.zeros((ncomp,ncomp,ncomp))
+            for i in range(ncomp):
+                for j in range(ncomp):
+                    for k in range(ncomp):
                         s            = [subset[i],subset[j],subset[k]]
                         WHred[i,j,k] = WH[s[0],s[1],s[2]]
                         WSred[i,j,k] = WS[s[0],s[1],s[2]]
                         WVred[i,j,k] = WV[s[0],s[1],s[2]]
         elif(self.polyorder==4):
-            WHred = np.zeros((nendm,nendm,nendm,nendm))
-            WSred = np.zeros((nendm,nendm,nendm,nendm))
-            WVred = np.zeros((nendm,nendm,nendm,nendm))
-            for i in range(nendm):
-                for j in range(nendm):
-                    for k in range(nendm):
-                        for l in range(nendm):
+            WHred = np.zeros((ncomp,ncomp,ncomp,ncomp))
+            WSred = np.zeros((ncomp,ncomp,ncomp,ncomp))
+            WVred = np.zeros((ncomp,ncomp,ncomp,ncomp))
+            for i in range(ncomp):
+                for j in range(ncomp):
+                    for k in range(ncomp):
+                        for l in range(ncomp):
                             s              = [subset[i],subset[j],subset[k],subset[l]]
                             WHred[i,j,k,l] = WH[s[0],s[1],s[2],s[3]]
                             WSred[i,j,k,l] = WS[s[0],s[1],s[2],s[3]]
@@ -172,8 +177,8 @@ class Margules(object):
         self.WH         = WHred
         self.WS         = WSred
         self.WV         = WVred
-        self.endmembers = endmembers        # Reduce the endmember list to the new one
-        self.nendm      = len(endmembers)
+        self.components = components        # Reduce the component list to the new one
+        self.ncomp      = len(components)
 
     def compute_interaction_G(self,x,T,P=1,check=True):
         """
@@ -201,19 +206,19 @@ class Margules(object):
         Gnonideal  = np.zeros_like(x[...,0])
         WG         = self.compute_w_gibbs(T,P=P)
         if self.polyorder==2:
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
                     Gnonideal += WG[i,j] * x[...,i]*x[...,j]
         elif self.polyorder==3:
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
-                    for k in range(j,self.nendm):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
                         Gnonideal += WG[i,j,k] * x[...,i]*x[...,j]*x[...,k]
         elif self.polyorder==4:
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
-                    for k in range(j,self.nendm):
-                        for l in range(k,self.nendm):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
+                        for l in range(k,self.ncomp):
                             Gnonideal += WG[i,j,k,l] * x[...,i]*x[...,j]*x[...,k]*x[...,l]
         else:
             raise ValueError(f'Cannot work with Margules parameters of dimension {self.polyorder}')
@@ -243,7 +248,7 @@ class Margules(object):
     def get_activity_coefficients_of_components(self,x,T,P=1):
         """
         Using the Margules parameters WG and the molar abundances x (with x.sum()==1),
-        compute the activities a of these liquid endmember components. See equation 22
+        compute the activities a of these liquid components. See equation 22
         of Berman & Brown (1984)
 
         Based on code by D. Ebel 2001.
@@ -265,27 +270,27 @@ class Margules(object):
         """
         assert len(x.shape)<=2, 'Error: This function can only accept a single x vector or a 1d set of x vectors.'
         x          = np.array(x)
-        assert x.shape[-1]==self.nendm, 'Error: Nr of x-dimensions unequal to nr of endmembers'
+        assert x.shape[-1]==self.ncomp, 'Error: Nr of x-dimensions unequal to nr of components'
         if len(x.shape)==2:
             nx         = x.shape[0]
             assert(np.all(np.abs(x.sum(axis=-1)-1)<1e-2)), 'Error: The X abundances do not add up to 1'
             x          = x.transpose()
-            rtlngamma  = np.zeros((self.nendm,nx))
+            rtlngamma  = np.zeros((self.ncomp,nx))
         else:
-            rtlngamma  = np.zeros(self.nendm)
+            rtlngamma  = np.zeros(self.ncomp)
             assert(np.abs(x.sum()-1)<1e-2), 'Error: The X abundances do not add up to 1'
         pp         = 1-self.polyorder           # pp=(1-p) where p is polynomial degree
         WG         = self.compute_w_gibbs(T,P=P)
-        for m in range(self.nendm):
-            for i in range(self.nendm-1):
-                for j in range(i,self.nendm):
+        for m in range(self.ncomp):
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
                     if(self.polyorder==2):
                         q = 0
                         if(m==i): q+=1
                         if(m==j): q+=1
                         rtlngamma[m] += WG[i,j] * ( (q*x[i]*x[j])/(x[m]+1e-99) + pp*x[i]*x[j] )
                     else:
-                        for k in range(j,self.nendm):
+                        for k in range(j,self.ncomp):
                             if(self.polyorder==3):
                                 q = 0
                                 if(m==i): q+=1
@@ -294,7 +299,7 @@ class Margules(object):
                                 rtlngamma[m] += WG[i,j,k] * ( (q*x[i]*x[j]*x[k])/(x[m]+1e-99) + pp*x[i]*x[j]*x[k] )
                             else:
                                 assert(self.polyorder==4), f'Cannot work with Margules parameters of dimension {self.polyorder}'
-                                for l in range(k,self.nendm):
+                                for l in range(k,self.ncomp):
                                     q = 0
                                     if(m==i): q+=1
                                     if(m==j): q+=1

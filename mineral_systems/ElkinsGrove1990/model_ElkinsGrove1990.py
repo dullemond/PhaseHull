@@ -18,20 +18,20 @@ import matplotlib.pyplot as plt
 import pandas as pd
 pd.set_option('display.max_rows', 1000)
 import os
-from phasehull import dissect_molecule,dissect_oxide,identify_endmember_minerals,Margules
+from phasehull import dissect_molecule,dissect_oxide,identify_component_minerals,Margules
 
 class ElkinsGrove90(object):
-    def __init__(self,endmselect,T,P=1,path=None,ext=''):
+    def __init__(self,compselect,T,P=1,path=None,ext=''):
         if path is None: path = os.path.dirname(__file__)
         self.T          = T
         self.P          = P
-        self.endmembers = ["CaAl2Si2O8","NaAlSi3O8","KAlSi3O8"]  #   Anorthite, Albite, Orthoclase
-        self.endmselect = endmselect
-        assert set(endmselect)<=set(self.endmembers), 'Error: The requested endmembers are not all in this model.'
+        self.components = ["CaAl2Si2O8","NaAlSi3O8","KAlSi3O8"]  #   Anorthite, Albite, Orthoclase
+        self.compselect = compselect
+        assert set(compselect)<=set(self.components), 'Error: The requested components are not all in this model.'
         WH,WS,WV        = self.get_Margules()
-        self.margules   = Margules(self.endmembers)
+        self.margules   = Margules(self.components)
         self.margules.load_w(WH,WS,WV)
-        self.margules.reduce_margules_to_subset(endmselect)
+        self.margules.reduce_margules_to_subset(compselect)
         self.reset(T,P)
 
     def reset(self,T,P=1):
@@ -41,7 +41,7 @@ class ElkinsGrove90(object):
     def Gfunc(self,x):
         if len(x.shape)==1:
             x = np.array([x,])
-        assert x.shape[-1]==len(self.endmselect), 'Error: Dimension of x incorrect.'
+        assert x.shape[-1]==len(self.compselect), 'Error: Dimension of x incorrect.'
         G = self.margules.compute_ideal_mixing_G(x,self.T) + self.margules.compute_interaction_G(x,self.T,self.P)
         return G
 
@@ -64,9 +64,9 @@ class ElkinsGrove90(object):
         whabanor = 12545.0  # joules     
         wvabanor = -1.095   # joules/bar 
 
-        An = 0   # Anorthite CaAl2Si2O8 is the zeroth endmember
-        Ab = 1   # Albite NaAlSi3O8 is the first endmember
-        Or = 2   # Orthoclase KAlSi3O8 is the second endmember
+        An = 0   # Anorthite CaAl2Si2O8 is the zeroth component
+        Ab = 1   # Albite NaAlSi3O8 is the first component
+        Or = 2   # Orthoclase KAlSi3O8 is the second component
 
         WH = np.zeros((3,3,3))
         WS = np.zeros((3,3,3))

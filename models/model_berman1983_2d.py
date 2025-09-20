@@ -13,20 +13,20 @@ T          = 1400.+273.15
 
 nrefine    = 4
 
-endmembers = ["SiO2","CaO","Al2O3"]
-#endmembers = ["SiO2","CaO","MgO"]
-#endmembers = ["SiO2","MgO","Al2O3"]
-#endmembers = ["CaO","MgO","Al2O3"]
-endmnames  = endmembers
-b          = Berman83(endmembers,T)
+components = ["SiO2","CaO","Al2O3"]
+#components = ["SiO2","CaO","MgO"]
+#components = ["SiO2","MgO","Al2O3"]
+#components = ["CaO","MgO","Al2O3"]
+compnames  = components
+b          = Berman83(components,T)
 def Gfunc(x):
     return b.Gfunc(x)
 
 crystaldb  = ph.CrystalDatabase(b.mdb)
-liquid     = ph.Liquid('magma',endmembers,Gfunc)
+liquid     = ph.Liquid('magma',components,Gfunc)
 
 nres0      = 30
-phull      = ph.PhaseHull(endmembers,crystaldb,liquid,nres0=nres0,nrefine=nrefine)
+phull      = ph.PhaseHull(components,crystaldb,liquid,nres0=nres0,nrefine=nrefine)
 
 isel_allc  = phull.select_simplices_of_a_given_kind('allcryst')
 isel_liq   = phull.select_simplices_of_a_given_kind('liquid')
@@ -102,9 +102,9 @@ for i in range(len(x)):
     else:
         off=voff
     ax.text(x[i,0]+off,x[i,1]-off/2,x[i,2]-off/2,db['Abbrev'].iloc[i],ha='center',va='center',size=size)
-ax.set_tlabel(endmnames[0])
-ax.set_llabel(endmnames[1])
-ax.set_rlabel(endmnames[2])
+ax.set_tlabel(compnames[0])
+ax.set_llabel(compnames[1])
+ax.set_rlabel(compnames[2])
 #ax.text(1,0.5,-0.5,f'T = {T} K',ha='left')
 ax.text(1,0.5,-0.5,f'T = {T:.0f} K ({T-273.15:.0f} C)',ha='left')
 ax.text(1,-0.5,0.5,f'nres0 = {nres0}',ha='right')
@@ -120,9 +120,9 @@ for stype in xb:
         ax.plot(x[:,0],x[:,1],x[:,2],color='C0')
 x   = phull.complete_x(phull.thepoints[-1][:,:-1])
 ax.scatter(x[:,0],x[:,1],x[:,2],marker='.',s=1,color='C1')
-ax.set_tlabel(endmnames[0])
-ax.set_llabel(endmnames[1])
-ax.set_rlabel(endmnames[2])
+ax.set_tlabel(compnames[0])
+ax.set_llabel(compnames[1])
+ax.set_rlabel(compnames[2])
 ax.text(1,0.5,-0.5,f'T = {T:.0f} K ({T-273.15:.0f} C)',ha='left')
 ax.text(1,-0.5,0.5,f'nres0 = {nres0}',ha='right')
 ax.text(1-h,-0.5+0.5*h,0.5+0.5*h,f'Refinement levels: {nrefine}',ha='right')

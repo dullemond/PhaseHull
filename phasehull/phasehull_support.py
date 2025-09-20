@@ -16,35 +16,35 @@ import scipy
 #                        Solids (crystals)
 #-----------------------------------------------------------------------
 
-def extract_from_mineral_database_based_on_endmembers(mdb,endmembers):
+def extract_from_mineral_database_based_on_components(mdb,components):
     """
     Given a list of minerals in Pandas dataframe mdb (see read_minerals_and_liquids()), select only
-    those minerals that are composed of the endmembers given in the list endmembers. Also add
+    those minerals that are composed of the components given in the list components. Also add
     columns of x and moles.
 
     Arguments:
 
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
 
     Returns:
 
       select           A version of mdb with only the minerals that can be created
-                       from the endmembers, and a column with the x and moles values.
+                       from the components, and a column with the x and moles values.
                        The x are the mole fractions. The moles are the nr of moles
-                       of that mineral that can be made from 1 mole of endmembers.
+                       of that mineral that can be made from 1 mole of components.
                        Example: with 0.333 mole of SiO2 and 0.667 mole of MgO (in
-                       total 1 mole worth of endmembers) you can create 0.333 mole of
+                       total 1 mole worth of components) you can create 0.333 mole of
                        Mg2SiO4.
     """
     nm     = len(mdb)
-    nem    = len(endmembers)
+    nem    = len(components)
     select = mdb.copy()
     select['ok']    = False
     select['x']     = np.zeros((nm,nem)).tolist()
     select['moles'] = 0.
     for i,mn in select.iterrows():
-        d = dissect_oxide(mn['Formula'],endmembers=endmembers)
+        d = dissect_oxide(mn['Formula'],components=components)
         if d['complete']:
             select.at[i,'ok']     = True
             select.at[i,'x']      = d['x']
@@ -52,43 +52,43 @@ def extract_from_mineral_database_based_on_endmembers(mdb,endmembers):
     select = select[select['ok']].copy().reset_index(drop=True).drop('ok',axis=1)
     return select
 
-def identify_endmember_minerals(mdb,endmembers):
+def identify_component_minerals(mdb,components):
     """
     After having determined the DfG and mfDfG values of the points in the mdb database
     using compute_DfG_with_mole_fraction_weighting(mdb,T), this function determines which
-    of them are the true endmembers with the lowest DfG.
+    of them are the true components with the lowest DfG.
 
     Arguments:
 
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
 
     Returns:
 
-      iendmembers      List of integer indices of the mdb database pointing to the true
-                       endmembers. If the mdb database has different versions of the endmembers
+      icomponents      List of integer indices of the mdb database pointing to the true
+                       components. If the mdb database has different versions of the components
                        (e.g. alpha-quartz or beta-quartz for SiO2), then the version is
                        picked that has (for the given T) the smallest value of DfG.
-      DfGendmembers    List of DfG values of these endmembers.
+      DfGcomponents    List of DfG values of these components.
       
     """
-    iendmembers   = np.zeros(len(endmembers),dtype=int)
-    DfGendmembers = np.zeros(len(endmembers))+1e90
-    for k,e in enumerate(endmembers):
+    icomponents   = np.zeros(len(components),dtype=int)
+    DfGcomponents = np.zeros(len(components))+1e90
+    for k,e in enumerate(components):
         ms = mdb[mdb['Formula']==e]
-        assert(len(ms)>0), f'Error: Could not find endmember mineral {e} among minerals'
+        assert(len(ms)>0), f'Error: Could not find component mineral {e} among minerals'
         DfG  = 1e90
         iend = -1
         for i,row in ms.iterrows():
             if(row['DfG']<DfG):
                 iend = i
                 DfG  = row['DfG']
-        assert i>-1, f'Error: Could not find endmember mineral {e} among minerals (stranger version)'
-        iendmembers[k]   = iend
-        DfGendmembers[k] = DfG
-    return iendmembers,DfGendmembers
+        assert i>-1, f'Error: Could not find component mineral {e} among minerals (stranger version)'
+        icomponents[k]   = iend
+        DfGcomponents[k] = DfG
+    return icomponents,DfGcomponents
 
-def compute_re_level_G_in_database(mdb,endmembers):
+def compute_re_level_G_in_database(mdb,components):
     """
     Like re_level_points(), but now done inplace within the database of
     solids, by creating a new column 'mfDfG00', and if 'mfDfGmass' is
@@ -100,31 +100,31 @@ def compute_re_level_G_in_database(mdb,endmembers):
 
       mdb          The mineral database of solids
 
-      endmembers   List of endmembers
+      components   List of components
 
     Returns:
 
       inplace new columns in the database
 
-      iendmembers     List of indices of the endmembers
-      DfGendmembers   Delta_f G of these endmembers
+      icomponents     List of indices of the components
+      DfGcomponents   Delta_f G of these components
 
-    NOTE: The DfGendmembers should also be used if you want to
+    NOTE: The DfGcomponents should also be used if you want to
           re-level the liquid(s), because all substances should
           use the same relevelling energies.
 
     """
-    iendmembers,DfGendmembers = identify_endmember_minerals(mdb,endmembers)
+    icomponents,DfGcomponents = identify_component_minerals(mdb,components)
     pts            = np.stack(np.array(mdb['x']).copy())
     pts[:,-1]      = np.array(mdb['mfDfG']).copy()
-    Gzero          = re_level_points(pts,iendmembers,return_only_Gzero=True)
+    Gzero          = re_level_points(pts,icomponents,return_only_Gzero=True)
     mdb['mfDfG00'] = mdb['mfDfG'] - Gzero
     if('mfDfGmass' in mdb.columns):
         pts        = np.stack(np.array(mdb['xmass']).copy())
         pts[:,-1]  = np.array(mdb['mfDfGmass']).copy()
-        Gzero      = re_level_points(pts,iendmembers,return_only_Gzero=True)
+        Gzero      = re_level_points(pts,icomponents,return_only_Gzero=True)
         mdb['mfDfGmass00'] = mdb['mfDfGmass'] - Gzero
-    return iendmembers,DfGendmembers
+    return icomponents,DfGcomponents
 
 #-----------------------------------------------------------------------
 #                            Liquids
@@ -144,11 +144,11 @@ def compute_re_level_G_of_fluid_continuum(x,G,zeroGs):
 
       x            The mole or mass fractions. Must be array of shape [nx,N]
                    where nx is the number of points of x, and N is the
-                   number of endmembers.
+                   number of components.
 
       G            The G values to re-level
 
-      zeroGs       For an N-endmember system, an array of N values of
+      zeroGs       For an N-component system, an array of N values of
                    the Gs at x = [1,0,0...], [0,1,...] etc to [0,...,1]
                    to which the G should be re-levelled.
 
@@ -177,7 +177,7 @@ def compute_mu_of_liquid_for_given_mineral_stoichiometry_and_activity_coefficien
 
     Arguments:
 
-      ldb           The database of liquid endmembers
+      ldb           The database of liquid components
       formula       Example: liquid silica would be 'SiO2', in the database ldb it would be 'SiO2Liq'
 
     Returns:
@@ -194,7 +194,7 @@ def compute_mu_of_liquid_for_given_mineral_stoichiometry_and_activity_coefficien
         mu0    = get_mu0_at_T(ldb,unit[m]+'Liq',T)
         assert m in x, f'Error: Need x[{m}] (the molar fraction of component [{unit[m]}]) for computing this.'
         assert m in gamma, f'Error: Need gamma[{m}] (the activity coefficient of component [{unit[m]}]) for computing this.'
-        mu     = mu0 + RT * ( np.log(x[m]) + np.log(gamma[m]) )
+        mu     = mu0 + RT * ( np.log(x[m]+1e-90) + np.log(gamma[m]) )
         musum += nu[m] * mu
     return musum
 
@@ -275,32 +275,32 @@ def dissect_molecule(spec):
                 raise ValueError('Weird error in dissect_molecule()')
         return mol,mass,charge
 
-def dissect_oxide(formula,endmembers=None,weights=None):
+def dissect_oxide(formula,components=None,weights=None):
     """
-    Dissect an oxide into its endmembers.
+    Dissect an oxide into its components.
 
     Example:
-      dissect_oxide('MgSiO3',endmembers=['SiO2','Al2O3','MgO'])
+      dissect_oxide('MgSiO3',components=['SiO2','Al2O3','MgO'])
     will give x=[0.5, 0. , 0.5] and moles=0.5
-      dissect_oxide('Mg2SiO4',endmembers=['SiO2','Al2O3','MgO'])
+      dissect_oxide('Mg2SiO4',components=['SiO2','Al2O3','MgO'])
     will give x=[0.33333333, 0.        , 0.66666667] and moles=0.33333333
 
     Arguments:
 
       formula        The formula for the mineral
 
-      endmembers     (optional) If set to a list of endmembers, then it will compute
+      components     (optional) If set to a list of components, then it will compute
                      x (the mole fractions), moles (how many moles of this mineral
-                     can be made with 1 mole of endmembers)
+                     can be made with 1 mole of components)
 
-      weights        (optional) If set to an array of length len(endmembers)
+      weights        (optional) If set to an array of length len(components)
                      containing only values 1, then nothing changes. But if
-                     a value is, say, 0.5, then the corresponding endmember
+                     a value is, say, 0.5, then the corresponding component
                      is considered to be only half that formula unit. Example:
-                     in the MELTS code one of the endmembers is Mn2SiO4, but
+                     in the MELTS code one of the components is Mn2SiO4, but
                      it is in fact handled as MnSi0.5O2 internally. This changes
                      the molar fractions x. The weight would then be 0.5 for
-                     this endmember, because in the liquids.fwf it is given as
+                     this component, because in the liquids.fwf it is given as
                      Mn2SiO4 (with "Factor" column = weight = 0.5), while in the
                      computation of x we have to consider it to be MnSi0.5O2.
 
@@ -314,28 +314,28 @@ def dissect_oxide(formula,endmembers=None,weights=None):
          nrox        Dictionary of the nr of O-atoms each unit represents
          unitelem    Reverse dictionary from primitive unit back to elements
     
-      and if endmembers has been passed in the arguments, the answer contains
+      and if components has been passed in the arguments, the answer contains
       the following additional contents:
     
          x           The molar weight fractions of this oxide in terms of the
-                     given endmembers.
-         xendmembers The list of end member names associated with the x vector
-         nuendm      Same as x, but not normalized to 1. So it gives the
-                     portions of each endmember (typically integer). Put in
-                     another way: x = nuendm/nuendm.sum()
+                     given components.
+         xcomponents The list of end member names associated with the x vector
+         nucomp      Same as x, but not normalized to 1. So it gives the
+                     portions of each component (typically integer). Put in
+                     another way: x = nucomp/nucomp.sum()
          moles       The number of moles of the dissected oxide one obtains
-                     from one total mole of endmembers. Example: dissecting
-                     'Mg2Si2O6' into endmembers=['Mg2SiO4','SiO2'] with
+                     from one total mole of components. Example: dissecting
+                     'Mg2Si2O6' into components=['Mg2SiO4','SiO2'] with
                      weights=[0.5,1] will give x=[0.667,0.333] and moles=0.333,
                      because 2 units of 'MgSi0.5O2' (note the weight=0.5) and
                      1 unit of SiO2 will give 1 unit of Mg2Si2O6 for three
-                     total units of endmembers, i.e. 1/3 unit of Mg2Si2O6 for
-                     one unit of endmembers. Put in another way:
-                     moles=1/nuendm.sum()
-         complete    If True, then the dissection into the given endmembers
+                     total units of components, i.e. 1/3 unit of Mg2Si2O6 for
+                     one unit of components. Put in another way:
+                     moles=1/nucomp.sum()
+         complete    If True, then the dissection into the given components
                      was successful. If False, then some parts are still left
-                     and cannot be decomposed into the endmembers.
-         positive    Since the use of composite endmembers could, concievably,
+                     and cannot be decomposed into the components.
+         positive    Since the use of composite components could, concievably,
                      lead to negative mole fractions, this boolean tells if
                      all x are positive (True) or one or more is negative
                      (False). 
@@ -422,73 +422,73 @@ def dissect_oxide(formula,endmembers=None,weights=None):
     answer = {'nu':nu,'unit':unit,'nrox':nrox,'unitelem':unitelem}
 
     # To be able to make e.g. ternary plots, we need to reconstruct the
-    # relative mole fractions. The endmembers keyword should be a list
-    # of endmembers (units).
+    # relative mole fractions. The components keyword should be a list
+    # of components (units).
     #
-    # Note that endmembers can be non-primitive. Primitive endmembers
+    # Note that components can be non-primitive. Primitive components
     # are e.g. MgO, SiO2, Na2O etc, which contain 1 and only 1 metal.
-    # Non-primitive endmembers are e.g. Mg2SiO4, Na2SiO3 etc. They
+    # Non-primitive components are e.g. Mg2SiO4, Na2SiO3 etc. They
     # are, themselves, a combination (MgO)2SiO2 and (Na2O)SiO2,
     # respectively. That is why the code below is a bit complex.
 
-    if endmembers is not None:
-        nendm            = len(endmembers)
-        endmembers_units = []
-        endmembers_elems = []
+    if components is not None:
+        ncomp            = len(components)
+        components_units = []
+        components_elems = []
         if weights is None:
-            weights = np.ones(nendm)
+            weights = np.ones(ncomp)
         else:
-            assert len(weights)==nendm, 'Error: Weights not same length as endmember list'
-        # Since we allow for composite endmembers, we should dissect each one of
+            assert len(weights)==ncomp, 'Error: Weights not same length as component list'
+        # Since we allow for composite components, we should dissect each one of
         # them, too, in order to be able to reconstruct their molar fractions in
         # the oxide we are dissecting.
-        for endm in endmembers:
-            if endm in formula_units_elem:
-                # Endmember is a unit itself
-                endmembers_units.append({endm:1})
-                endmembers_elems.append({endm:formula_units_elem[endm]})
+        for comp in components:
+            if comp in formula_units_elem:
+                # Component is a unit itself
+                components_units.append({comp:1})
+                components_elems.append({comp:formula_units_elem[comp]})
             else:
-                # Check if endmember is a combination of units
-                diss    = dissect_oxide(endm)  # Recursive call: Dissect the composite endmember into primitive units
+                # Check if component is a combination of units
+                diss    = dissect_oxide(comp)  # Recursive call: Dissect the composite component into primitive units
                 em      = {}
                 el      = {}
                 for d in diss['nu']:
-                    assert d in formula_units_name, f'Error: Endmember {endm} is not known and cannot be constructed from known units.'
+                    assert d in formula_units_name, f'Error: Component {comp} is not known and cannot be constructed from known units.'
                     em[formula_units_name[d]] = diss['nu'][d]
                     el[formula_units_name[d]] = d
-                endmembers_units.append(em)
-                endmembers_elems.append(el)
+                components_units.append(em)
+                components_elems.append(el)
 
-        # Make a list of all elements contained in the composite endmembers
+        # Make a list of all elements contained in the composite components
         elems = set([])
-        for i in range(len(endmembers_elems)):
-            elems = elems.union(set(endmembers_elems[i].values()))
+        for i in range(len(components_elems)):
+            elems = elems.union(set(components_elems[i].values()))
         elems = list(elems)
 
         # Each element is uniquely associated to one primitive unit
         units = [formula_units_name[e] for e in elems]
-        assert nendm<=len(elems), 'Endmembers are not linearly independent'
+        assert ncomp<=len(elems), 'Components are not linearly independent'
 
         # Check if we have a difficult situation, where the number of elements
-        # (minus oxygen) is larger than the number of endmembers. If that is
-        # the case, the decomposition into endmembers may still work, but it
+        # (minus oxygen) is larger than the number of components. If that is
+        # the case, the decomposition into components may still work, but it
         # is a lot more tricky, as we have to avoid accidental matrix degeneracy.
-        if nendm<len(elems):
+        if ncomp<len(elems):
             # Tricky situation, could lead to degenerate matrix even when
             # the decomposition is possible.
-            # print('Warning: Fewer endmembers than elements in endmembers.')
-            # Check that the first nendm elements/units cover all endmembers
+            # print('Warning: Fewer components than elements in components.')
+            # Check that the first ncomp elements/units cover all components
             nelems = len(elems)
             indep  = False
             import itertools
-            combis = list(itertools.combinations(np.arange(nelems),nendm))
+            combis = list(itertools.combinations(np.arange(nelems),ncomp))
             for combi in combis:
-                checkendm = np.zeros(nendm)
+                checkcomp = np.zeros(ncomp)
                 for c in combi:
-                    for i in range(nendm):
-                        if units[c] in endmembers_units[i]:
-                            checkendm[i] = 1
-                if np.all(checkendm>0): indep = True
+                    for i in range(ncomp):
+                        if units[c] in components_units[i]:
+                            checkcomp[i] = 1
+                if np.all(checkcomp>0): indep = True
                 if indep: break
             if not indep:
                 raise ValueError('Error: Could not resolve degeneracy problem')
@@ -500,22 +500,22 @@ def dissect_oxide(formula,endmembers=None,weights=None):
             elems = list(np.array(elems)[list(combi)])
             # Now hope this avoids a degenerate matrix...
 
-        # Create the matrix that converts from vector of endmember moles to vector of element moles.
-        matrix = np.zeros((nendm,nendm))    # Matrix[index_of_element,index_of_endmember]
-        for i in range(nendm):
-            for k in range(nendm):
-                if units[k] in endmembers_units[i]:
-                    matrix[k,i]  = weights[i]*endmembers_units[i][units[k]]
+        # Create the matrix that converts from vector of component moles to vector of element moles.
+        matrix = np.zeros((ncomp,ncomp))    # Matrix[index_of_element,index_of_component]
+        for i in range(ncomp):
+            for k in range(ncomp):
+                if units[k] in components_units[i]:
+                    matrix[k,i]  = weights[i]*components_units[i][units[k]]
 
-        # Invert this matrix to get the conversion from vector of element moles to vector of endmember moles
-        matinv = scipy.linalg.inv(matrix)   # Matinv[index_of_endmember,index_of_element]
-        vector = np.zeros(nendm)
-        for i in range(nendm):
+        # Invert this matrix to get the conversion from vector of element moles to vector of component moles
+        matinv = scipy.linalg.inv(matrix)   # Matinv[index_of_component,index_of_element]
+        vector = np.zeros(ncomp)
+        for i in range(ncomp):
             e         = elems[i]
             if e in nu:
                 vector[i] = nu[e]
         x = np.matmul(matinv,vector)
-        nuendm = x.copy()
+        nucomp = x.copy()
         xsum = x.sum()
         if(xsum>0):
             x /= xsum
@@ -523,11 +523,11 @@ def dissect_oxide(formula,endmembers=None,weights=None):
         else:
             moles = np.nan
         answer['x'] = x
-        answer['xendmembers'] = endmembers.copy()
-        answer['nuendm'] = nuendm
-        answer['moles'] = moles                    # If we have 1 mole in total of the endmembers, how many moles of this oxide we get?
+        answer['xcomponents'] = components.copy()
+        answer['nucomp'] = nucomp
+        answer['moles'] = moles                    # If we have 1 mole in total of the components, how many moles of this oxide we get?
 
-        # Check if the decomposition into endmembers is complete
+        # Check if the decomposition into components is complete
         complete = True
         ## Old method:
         #for e in list(nu):
@@ -535,9 +535,9 @@ def dissect_oxide(formula,endmembers=None,weights=None):
         #        complete = False
         # New method:
         reconstruct_units = {}
-        for i,endm in enumerate(endmembers_units):
-            for u in endm:
-                count = nuendm[i]*endm[u]
+        for i,comp in enumerate(components_units):
+            for u in comp:
+                count = nucomp[i]*comp[u]
                 if u in reconstruct_units:
                     reconstruct_units[u] += count
                 else:
@@ -562,15 +562,15 @@ def dissect_oxide(formula,endmembers=None,weights=None):
         # Finalize the answer and return
         answer['complete']         = complete
         answer['positive']         = positive
-        answer['endmembers']       = endmembers
-        answer['endmembers_units'] = endmembers_units
+        answer['components']       = components
+        answer['components_units'] = components_units
     return answer
 
 #-----------------------------------------------------------------------
-#                  Simplices, endmembers, hyperplanes
+#                  Simplices, components, hyperplanes
 #-----------------------------------------------------------------------
 
-def convert_mole_fraction_into_mass_fraction(mdb,endmembers,x,iendmembers=None,return_also_mtot=False,inplace=False):
+def convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=None,return_also_mtot=False,inplace=False):
     """
     If you have a mole fraction x (such that x.sum(axis=-1)==1), or an array
     of them (again such that x.sum(axis=-1)==1, so x[...,:]), then you can
@@ -580,13 +580,13 @@ def convert_mole_fraction_into_mass_fraction(mdb,endmembers,x,iendmembers=None,r
     Arguments;
 
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
       x                Mole fraction x values. E.g. x = np.array([0.2,0.3,0.5]) or an
                        array of them, e.g. x = np.array([[0.2,0.3,0.5],[0.1,0.4,0.5]])
 
     Optional:
 
-      iendmembers      Indices (in the mdb database) of the endmember minerals,
+      icomponents      Indices (in the mdb database) of the component minerals,
                        so that these do not have to be first found in the database,
                        if you already know them. Just for speed-up.
 
@@ -613,23 +613,23 @@ def convert_mole_fraction_into_mass_fraction(mdb,endmembers,x,iendmembers=None,r
     """
     if inplace:
         x = np.stack(np.array(mdb['x']))
-    if iendmembers is None:
-        iendmembers,DfGendmembers = identify_endmember_minerals(mdb,endmembers)
-    endmemmass = np.zeros(len(iendmembers))
-    for k in range(len(iendmembers)):
-        i               = iendmembers[k]
+    if icomponents is None:
+        icomponents,DfGcomponents = identify_component_minerals(mdb,components)
+    componmass = np.zeros(len(icomponents))
+    for k in range(len(icomponents)):
+        i               = icomponents[k]
         formula         = mdb.iloc[i]['Formula']
         mol,mass,charge = dissect_molecule(formula)
-        endmemmass[k]   = mass
+        componmass[k]   = mass
     if len(x.shape)==1:
         mtot = 0.
     else:
         mtot = np.zeros_like(x[...,0])
-    for k in range(len(iendmembers)):
-        mtot += x[...,k]*endmemmass[k]
+    for k in range(len(icomponents)):
+        mtot += x[...,k]*componmass[k]
     xm = np.zeros_like(x)
-    for k in range(len(iendmembers)):
-        xm[...,k] = x[...,k]*endmemmass[k]/mtot
+    for k in range(len(icomponents)):
+        xm[...,k] = x[...,k]*componmass[k]/mtot
     if inplace:
         mdb['xmass'] = xm.tolist()
         if 'mfDfG' in mdb.columns:
@@ -640,7 +640,7 @@ def convert_mole_fraction_into_mass_fraction(mdb,endmembers,x,iendmembers=None,r
         else:
             return xm
 
-def convert_mass_fraction_into_mole_fraction(mdb,endmembers,xmass,iendmembers=None,return_also_moltot=False):
+def convert_mass_fraction_into_mole_fraction(mdb,components,xmass,icomponents=None,return_also_moltot=False):
     """
     The inverse of convert_mole_fraction_into_mass_fraction().
 
@@ -652,13 +652,13 @@ def convert_mass_fraction_into_mole_fraction(mdb,endmembers,xmass,iendmembers=No
     Arguments;
 
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
       xmass            Mass fraction x values. E.g. x = np.array([0.2,0.3,0.5]) or an
                        array of them, e.g. x = np.array([[0.2,0.3,0.5],[0.1,0.4,0.5]])
 
     Optional:
 
-      iendmembers      Indices (in the mdb database) of the endmember minerals,
+      icomponents      Indices (in the mdb database) of the component minerals,
                        so that these do not have to be first found in the database,
                        if you already know them. Just for speed-up.
 
@@ -675,23 +675,23 @@ def convert_mass_fraction_into_mole_fraction(mdb,endmembers,xmass,iendmembers=No
       moltot           (if return_also_moltot==True) the nr of moles of 1 g of this mineral.
 
     """
-    if iendmembers is None:
-        iendmembers,DfGendmembers = identify_endmember_minerals(mdb,endmembers)
-    endmemmol = np.zeros(len(iendmembers))
-    for k in range(len(iendmembers)):
-        i               = iendmembers[k]
+    if icomponents is None:
+        icomponents,DfGcomponents = identify_component_minerals(mdb,components)
+    componmol = np.zeros(len(icomponents))
+    for k in range(len(icomponents)):
+        i               = icomponents[k]
         formula         = mdb.iloc[i]['Formula']
         mol,mass,charge = dissect_molecule(formula)
-        endmemmol[k]    = 1/mass
+        componmol[k]    = 1/mass
     if len(xmass.shape)==1:
         moltot = 0.
     else:
         moltot = np.zeros_like(xmass[...,0])
-    for k in range(len(iendmembers)):
-        moltot += xmass[...,k]*endmemmol[k]
+    for k in range(len(icomponents)):
+        moltot += xmass[...,k]*componmol[k]
     xmol = np.zeros_like(xmass)
-    for k in range(len(iendmembers)):
-        xmol[...,k] = xmass[...,k]*endmemmol[k]/moltot
+    for k in range(len(icomponents)):
+        xmol[...,k] = xmass[...,k]*componmol[k]/moltot
     if return_also_moltot:
         return xmol,moltot
     else:
@@ -707,14 +707,14 @@ def interpolate_on_simplex(x,plane_x,plane_mfDfGs):
 
     Arguments:
 
-      x[0:N]              Mole fractions of substance in terms of endmembers. Sum should be 1.
+      x[0:N]              Mole fractions of substance in terms of components. Sum should be 1.
       plane_x[0:N,0:N]    Mole fractions of N substances with known mfDfG values. Left index
                           is the index of the N substances. Right index is same as x[0:N],
                           where plane_x[:,:].sum(axis=-1)==1. That is: plane_x[i] is a vector
                           like x, summing to 1.
       plane_mfDfGs[0:N]   The mass-fraction-weighted Delta_f G values of all the points of
                           plane_x. The mass-fraction-weighted means, e.g., that with 0.333 mole
-                          of SiO2 and 0.667 mole of MgO (in total 1 mole worth of endmembers)
+                          of SiO2 and 0.667 mole of MgO (in total 1 mole worth of components)
                           you can create 0.333 mole of Mg2SiO4. So mfDfG=0.333*DfG for Mg2SiO4
                           where DfG is the Delta_f G for 1 mole of Mg2SiO4.
 
@@ -736,17 +736,17 @@ def interpolate_on_simplex(x,plane_x,plane_mfDfGs):
     y = np.hstack((y,1-y.sum()))
     return (y*plane_mfDfGs).sum()
 
-def remove_all_minerals_with_DfG_above_endmember_plane(mdb,endmembers):
+def remove_all_minerals_with_DfG_above_component_plane(mdb,components):
     """
     Once we calculated the DfG of all solid (fixed-composition) minerals, see the function
     compute_DfG_with_mole_fraction_weighting(mdb,T) above, we can reject all those that
-    have a DfG above the DfG plane spanned by the endmembers, as they are always unstable, because 
-    they can always (at the very least) separate into phases with endmember composition.
+    have a DfG above the DfG plane spanned by the components, as they are always unstable, because 
+    they can always (at the very least) separate into phases with component composition.
 
     Arguments:
 
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
 
     Returns:
 
@@ -754,8 +754,8 @@ def remove_all_minerals_with_DfG_above_endmember_plane(mdb,endmembers):
     
     """
     nm          = len(mdb)
-    nem         = len(endmembers)
-    iend,DfGend = identify_endmember_minerals(mdb,endmembers)
+    nem         = len(components)
+    iend,DfGend = identify_component_minerals(mdb,components)
     plane_x     = np.zeros((nem,nem))
     mdb['ok']   = True
     for iem in range(nem):
@@ -786,7 +786,7 @@ def generate_grid_on_simplex(N,nx,return_integer_grid=False):
 
     Arguments:
 
-      N       The dimension of the space, i.e., the number of endmembers
+      N       The dimension of the space, i.e., the number of components
       nx      The nr of x points in each dimension
 
     Returns:
@@ -913,7 +913,7 @@ def put_simplex_grid_back_onto_regular_grid(grid,Gfloat=None,index=None,usenan=T
 def compute_DfG_with_mole_fraction_weighting(mdb,T,no_mfDfG=False):
     """
     After having removed all minerals from the mdb database that are not part of the
-    endmember system with extract_from_mineral_database_based_on_endmembers(mdb,endmembers),
+    component system with extract_from_mineral_database_based_on_components(mdb,components),
     and (with the same function) computed the mole fractions x, we can now compute the
     Gibbs free energies for all remaining minerals.
 
@@ -928,12 +928,12 @@ def compute_DfG_with_mole_fraction_weighting(mdb,T,no_mfDfG=False):
     1 bar, we (for now) omit the p-dependency, and take p=1bar as standard value.
 
     The mass-fraction-weighted version of DfG means, e.g., that with 0.333 mole of SiO2 and
-    0.667 mole of MgO (in total 1 mole worth of endmembers) you can create 0.333 mole of
+    0.667 mole of MgO (in total 1 mole worth of components) you can create 0.333 mole of
     Mg2SiO4. So mfDfG=0.333*DfG for Mg2SiO4 where DfG is the Delta_f G for 1 mole of Mg2SiO4.
 
     Note: mdb must have a column 'moles' (how many moles of that mineral can we create from
-          1 mole total of endmembers). It is easiest to use the function
-          extract_from_mineral_database_based_on_endmembers(mdb,endmembers) to automatically
+          1 mole total of components). It is easiest to use the function
+          extract_from_mineral_database_based_on_components(mdb,components) to automatically
           add this column. If you do not want to compute mfDfG (the Delta_f G for mdb['mole']
           amounts of moles of mineral), you get set no_mfDfG=True
 
@@ -949,7 +949,7 @@ def compute_DfG_with_mole_fraction_weighting(mdb,T,no_mfDfG=False):
     """
     mdb['DfG']   = 1e90   # The DfG per mole of this substance
     if not no_mfDfG:
-        mdb['mfDfG'] = 1e90   # The DfG per mole of the constituent endmembers
+        mdb['mfDfG'] = 1e90   # The DfG per mole of the constituent components
     for i,row in mdb.iterrows():
         DfG                = get_mu0_at_T(mdb,row['Abbrev'],T)
         mdb.at[i,'DfG']    = DfG
@@ -960,7 +960,7 @@ def compute_DfG_with_mole_fraction_weighting(mdb,T,no_mfDfG=False):
 #              Points in (x_0,...,x_{N-2},DeltaG) space
 #-----------------------------------------------------------------------
 
-def convert_points_from_mole_fraction_to_mass_fraction(mdb,endmembers,pts):
+def convert_points_from_mole_fraction_to_mass_fraction(mdb,components,pts):
     """
     Binary, ternary and higher order phase diagrams are often plotted with
     mass fractions instead of mole fractions on the axes. Given a list of
@@ -973,7 +973,7 @@ def convert_points_from_mole_fraction_to_mass_fraction(mdb,endmembers,pts):
     Arguments:
     
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
       pts              The list of points
 
     Returns:
@@ -981,13 +981,13 @@ def convert_points_from_mole_fraction_to_mass_fraction(mdb,endmembers,pts):
       ptsm             Array of points converted into mass fraction.
 
     """
-    iendmembers,DfGendmembers = identify_endmember_minerals(mdb,endmembers)
-    endmemmass = np.zeros(len(iendmembers))
-    for k in range(len(iendmembers)):
-        i               = iendmembers[k]
+    icomponents,DfGcomponents = identify_component_minerals(mdb,components)
+    componmass = np.zeros(len(icomponents))
+    for k in range(len(icomponents)):
+        i               = icomponents[k]
         formula         = mdb.iloc[i]['Formula']
         mol,mass,charge = dissect_molecule(formula)
-        endmemmass[k]   = mass
+        componmass[k]   = mass
     if type(pts) is list:
         ptsar = np.stack(pts)
     else:
@@ -995,13 +995,13 @@ def convert_points_from_mole_fraction_to_mass_fraction(mdb,endmembers,pts):
     x        = np.zeros_like(ptsar)
     x[:,:-1] = ptsar[:,:-1]
     x[:,-1]  = 1-x[:,:-1].sum(axis=-1)
-    xm,mtot  = convert_mole_fraction_into_mass_fraction(mdb,endmembers,x,iendmembers=iendmembers,return_also_mtot=True)
+    xm,mtot  = convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=icomponents,return_also_mtot=True)
     ptsm     = ptsar.copy()
     ptsm[:,:-1] = xm[:,:-1]        # Replace the mole fraction with mass fraction
     ptsm[:,-1]  = ptsm[:,-1]/mtot  # Also correct the Gibbs energy from per mole to per gram
     return ptsm
 
-def convert_points_from_mass_fraction_to_mole_fraction(mdb,endmembers,pts):
+def convert_points_from_mass_fraction_to_mole_fraction(mdb,components,pts):
     """
     The inverse of convert_points_from_mole_fraction_to_mass_fraction(). This is
     necessary if you want to plot liquid quantities into ternary plots, because
@@ -1017,7 +1017,7 @@ def convert_points_from_mass_fraction_to_mole_fraction(mdb,endmembers,pts):
     Arguments:
     
       mdb              The mineral database (see read_minerals_and_liquids())
-      endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
       pts              The list of points
 
     Returns:
@@ -1025,7 +1025,7 @@ def convert_points_from_mass_fraction_to_mole_fraction(mdb,endmembers,pts):
       ptsm             Array of points converted into mass fraction.
 
     """
-    iendmembers,DfGendmembers = identify_endmember_minerals(mdb,endmembers)
+    icomponents,DfGcomponents = identify_component_minerals(mdb,components)
     if type(pts) is list:
         ptsar = np.stack(pts)
     else:
@@ -1033,7 +1033,7 @@ def convert_points_from_mass_fraction_to_mole_fraction(mdb,endmembers,pts):
     x        = np.zeros_like(ptsar)
     x[:,:-1] = ptsar[:,:-1]
     x[:,-1]  = 1-x[:,:-1].sum(axis=-1)
-    xmol,moltot  = convert_mass_fraction_into_mole_fraction(mdb,endmembers,x,iendmembers=iendmembers,return_also_moltot=True)
+    xmol,moltot  = convert_mass_fraction_into_mole_fraction(mdb,components,x,icomponents=icomponents,return_also_moltot=True)
     ptsmol        = ptsar.copy()
     ptsmol[:,:-1] = xmol[:,:-1]        # Replace the mole fraction with mass fraction
     ptsmol[:,-1]  = ptsmol[:,-1]/moltot  # Also correct the Gibbs energy from per mole to per gram
@@ -1096,7 +1096,7 @@ def ternary_image(x0,x1,G,nxs=300):
     Gint[mask]  = np.nan
     return Gint
 
-def plot_ternary_image_bitmap(x0,x1,G,nxs=300,scale=1.,yfact=1,tax=None,endmembers=None):
+def plot_ternary_image_bitmap(x0,x1,G,nxs=300,scale=1.,yfact=1,tax=None,components=None):
     """
     Plot the ternary image ("heatmap"), using bitmap. Advantage: Fast.
     Disadvantage: Can have grainy edge near x0+x1=1.
@@ -1119,16 +1119,16 @@ def plot_ternary_image_bitmap(x0,x1,G,nxs=300,scale=1.,yfact=1,tax=None,endmembe
         figure, tax = ternary.figure(scale=scale)
     tax.boundary(linewidth=1.0)
     tax.ax.imshow(Gint.T,extent=[0,scale,0,scale*yfact],origin='lower')
-    if endmembers:
-        tax.right_corner_label(endmembers[0])
-        tax.top_corner_label(endmembers[1])
-        tax.left_corner_label(endmembers[2])
+    if components:
+        tax.right_corner_label(components[0])
+        tax.top_corner_label(components[1])
+        tax.left_corner_label(components[2])
     tax.get_axes().axis('off')
     tax.clear_matplotlib_ticks()
     tax.show()
     return tax
 
-def plot_ternary_image(d,scale,endmembers=None,cmap=None):
+def plot_ternary_image(d,scale,components=None,cmap=None):
     """
     Plot the ternary image ("heatmap"), using the "ternary" package.
     Advantage: smooth. Disadvantage: Can be slow.
@@ -1140,7 +1140,7 @@ def plot_ternary_image(d,scale,endmembers=None,cmap=None):
 
     Option:
 
-      endmembers    Endmember names.
+      components    Component names.
       cmap          Color map
     """
     import ternary
@@ -1151,10 +1151,10 @@ def plot_ternary_image(d,scale,endmembers=None,cmap=None):
     tax.boundary(linewidth=1.0)
     tax.gridlines(multiple=scale//10, color="blue")
     #tax.ticks(axis='brl', clockwise=True, linewidth=1, multiple=scale//10)  # Somehow the axis does not work
-    if endmembers is not None:
-        tax.right_corner_label(endmembers[0])
-        tax.top_corner_label(endmembers[1])
-        tax.left_corner_label(endmembers[2])
+    if components is not None:
+        tax.right_corner_label(components[0])
+        tax.top_corner_label(components[1])
+        tax.left_corner_label(components[2])
     tax.get_axes().axis('off')
     tax.clear_matplotlib_ticks()
     tax.show()
@@ -1181,7 +1181,7 @@ def ternary_fill(x,stype,scale=1,ax=None,done=False):
     if lincol is not None:
         ax.plot(y[:,0]*scale,y[:,1]*scale,color=lincol,linewidth=0.5)
 
-def plot_ternary_phases(simplices,scale=1,endmembers=None):
+def plot_ternary_phases(simplices,scale=1,components=None):
     import ternary
     ddone   = {'allcryst':False,'liquid':False,'cryst_1_liq_1':False,'cryst_1_liq_2':False,'cryst_2_liq_1':False,'crystals':False,'inmisc_liquids':False}
     #linest = {'allcryst':None,'liquid':None,'cryst_1_liq_1':'--','crystals':'o'}
@@ -1193,10 +1193,10 @@ def plot_ternary_phases(simplices,scale=1,endmembers=None):
         ternary_fill(x,simplices['stype'][isim],scale=scale,ax=ax,done=ddone[simplices['stype'][isim]])
         ddone[simplices['stype'][isim]] = True
     print('Finished ternary phases map')
-    if endmembers is not None:
-        tax.right_corner_label(endmembers[0])
-        tax.top_corner_label(endmembers[1])
-        tax.left_corner_label(endmembers[2])
+    if components is not None:
+        tax.right_corner_label(components[0])
+        tax.top_corner_label(components[1])
+        tax.left_corner_label(components[2])
     tax.get_axes().axis('off')
     tax.clear_matplotlib_ticks()
     ax.legend()

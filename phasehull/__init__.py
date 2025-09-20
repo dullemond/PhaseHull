@@ -4,8 +4,9 @@ from .phasehull_margules import *
 from .phasehull_subsystem import *
 from .phasehull_thermodynamic_tools import *
 from .phasehull_xT_tools import *
+from .phasehull_gibbsminfinder import *
 
-__all__ = ["PhaseHull","CrystalDatabase","Liquid","Margules","SubSystem"]
+__all__ = ["PhaseHull","CrystalDatabase","Liquid","Margules","SubSystem","GibbsMinFinder"]
 __version__ = "0.1.0"
 __author__ = 'Cornelis Dullemond'
 __credits__ = 'Heidelberg University, Germany'

@@ -14,27 +14,73 @@ import matplotlib.pyplot as plt
 import pandas as pd
 pd.set_option('display.max_rows', 1000)
 import os
-from phasehull import dissect_molecule,dissect_oxide,identify_endmember_minerals,Margules
+from phasehull import dissect_molecule,dissect_oxide,identify_component_minerals,Margules
 
 class BermanBrown84(object):
-    def __init__(self,endmselect,T,P=1,path=None,ext=''):
+    """
+    The Berman and Brown 1984 ternary model of the system CaO, Al2O3, and SiO2.
+    You first set up this object (see arguments below). Then you can use the following
+    functions and data (use ? to read their doc strings):
+
+      reset(T,P)           Change the fixed temperature and pressure to new values.
+                           Calls reset_crystals() and reset_liquids().
+
+      reset_crystals(T,P)  Change the fixed temperature and pressure of the crystal
+                           database mdb to new values, and stores T,P..
+                           You can pass this on to PhaseHull.CrystalDatabase() for
+                           allowing PhaseHull to automatically reset the T and P if
+                           necessary.
+    
+      reset_liquid(T,P)    Change the fixed temperature and pressure of the liquid
+                           database ldb to new values, and stores T,P.
+                           You can pass this on to PhaseHull.Liquid() for
+                           allowing PhaseHull to automatically reset the T and P if
+                           necessary.
+    
+      Gfunc(x)             The function to compute the Delta_a G for the liquid phase,
+                           to pass on to the PhaseHull code.
+    
+      DaG(f,ph,T,P)        Returns the Delta_a G for formula f in phase ph at temperature
+                           T and P (may internally reset T, P). Note that this function
+                           is just for your convenience, and is not necessary for the
+                           PhaseHull algorithm.
+
+      mdb                  The Pandas database of crystal phases
+
+      ldb                  The Pandas database of liquid phases at the corners of the
+                           phase diagram (the system components).
+    """
+    def __init__(self,compselect=None,T=298.15,P=1,path=None,ext=''):
+        """
+        Arguments:
+
+          compselect       List of system components you want to restrict to. You
+                           can choose from CaO, Al2O3, and SiO2. If no selection
+                           is made, the full set is used.
+
+          T                Temperature in [K]. You can always change it later, using the
+                           reset(T,P) function . But the philosophy of the models here is 
+                           that you fix a T and P, and compute the phase diagram for those.
+        """
         if path is None: path = os.path.dirname(__file__)
         self.path       = path
         self.Rgas       = 8.314  # J/mol·K
         self.T          = T
         self.P          = P
-        self.endmembers = ["SiO2","Al2O3","CaO"]
-        self.endmselect = endmselect
-        assert set(endmselect)<=set(self.endmembers), 'Error: The requested endmembers are not all in this model.'
+        self.components = ["SiO2","Al2O3","CaO"]
+        if compselect is None:
+            compselect = self.components.copy()
+        self.compselect = compselect
+        assert set(compselect)<=set(self.components), 'Error: The requested components are not all in this model.'
         self.mdb_orig   = pd.read_fwf(os.path.join(path,'minerals'+ext+'.fwf'))
         self.ldb_orig   = pd.read_fwf(os.path.join(path,'liquids'+ext+'.fwf'))
-        self.mdb        = self.extract_from_mineral_database_based_on_endmembers(self.mdb_orig,endmselect)
-        self.ldb        = self.extract_from_mineral_database_based_on_endmembers(self.ldb_orig,endmselect)
-        self.sort_liquid_endmembers()
+        self.mdb        = self.extract_from_mineral_database_based_on_components(self.mdb_orig,compselect)
+        self.ldb        = self.extract_from_mineral_database_based_on_components(self.ldb_orig,compselect)
+        self.sort_liquid_components()
         WH,WS           = self.get_Margules()
-        self.margules   = Margules(self.endmembers)
+        self.margules   = Margules(self.components)
         self.margules.load_w(WH,WS)
-        self.margules.reduce_margules_to_subset(endmselect)
+        self.margules.reduce_margules_to_subset(compselect)
         self.reset(T,P)
 
     def reset(self,T,P=1):
@@ -57,8 +103,8 @@ class BermanBrown84(object):
     def Gfunc(self,x):
         if len(x.shape)==1:
             x = np.array([x,])
-        assert x.shape[-1]==len(self.endmselect), 'Error: Dimension of x incorrect.'
-        G = self.compute_G_of_liquid_mixture(self.ldb,self.T,x,self.endmselect)
+        assert x.shape[-1]==len(self.compselect), 'Error: Dimension of x incorrect.'
+        G = self.compute_G_of_liquid_mixture(self.ldb,self.T,x,self.compselect)
         return G
 
     def get_Margules(self):
@@ -108,7 +154,7 @@ class BermanBrown84(object):
     
         return WH, WS
 
-    def compute_G_of_liquid_mixture(self,ldb,T,x,endmembers,nomixG=False,
+    def compute_G_of_liquid_mixture(self,ldb,T,x,components,nomixG=False,
                                     incl_linear=True,incl_ideal=True,
                                     incl_nonideal=True):
         """
@@ -124,9 +170,9 @@ class BermanBrown84(object):
     
           x            The mole (!) fractions. Must be array of shape [nx,N]
                        where nx is the number of points of x, and N is the
-                       number of endmembers.
+                       number of components.
     
-          endmembers   The endmembers (formulae, e.g. ['SiO2','Al2O3','MgO'])
+          components   The components (formulae, e.g. ['SiO2','Al2O3','MgO'])
     
         Options:
     
@@ -143,15 +189,15 @@ class BermanBrown84(object):
         if type(x) is list: x = np.array(x)
         N          = x.shape[-1]
         nx         = x.shape[0]
-        assert N==len(endmembers), 'Error: Nr of endmembers and x components not equal'
-        iendmembers,DfGendmembers = identify_endmember_minerals(ldb,endmembers)
+        assert N==len(components), 'Error: Nr of components and x components not equal'
+        icomponents,DfGcomponents = identify_component_minerals(ldb,components)
     
         G  = np.zeros(nx)
 
-        # First the linear combination of the N endmembers
+        # First the linear combination of the N components
         if incl_linear:
             for i in range(N):
-                G += x[:,i]*DfGendmembers[i]
+                G += x[:,i]*DfGcomponents[i]
 
         # Then the mixing
         if not nomixG:
@@ -235,35 +281,35 @@ class BermanBrown84(object):
         mu0     = DHf0 + intCp - T * ( S0 + intCpT )
         return mu0
 
-    def extract_from_mineral_database_based_on_endmembers(self,mdb,endmembers):
+    def extract_from_mineral_database_based_on_components(self,mdb,components):
         """
         Given a list of minerals in Pandas dataframe mdb (see read_minerals_and_liquids()), select only
-        those minerals that are composed of the endmembers given in the list endmembers. Also add
+        those minerals that are composed of the components given in the list components. Also add
         columns of x and moles.
     
         Arguments:
     
           mdb              The mineral database (see read_minerals_and_liquids())
-          endmembers       List of the formulae of the endmembers, e.g. ['SiO2','MgO','Al2O3'].
+          components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
     
         Returns:
     
           select           A version of mdb with only the minerals that can be created
-                           from the endmembers, and a column with the x and moles values.
+                           from the components, and a column with the x and moles values.
                            The x are the mole fractions. The moles are the nr of moles
-                           of that mineral that can be made from 1 mole of endmembers.
+                           of that mineral that can be made from 1 mole of components.
                            Example: with 0.333 mole of SiO2 and 0.667 mole of MgO (in
-                           total 1 mole worth of endmembers) you can create 0.333 mole of
+                           total 1 mole worth of components) you can create 0.333 mole of
                            Mg2SiO4.
         """
         nm     = len(mdb)
-        nem    = len(endmembers)
+        nem    = len(components)
         select = mdb.copy()
         select['ok']    = False
         select['x']     = np.zeros((nm,nem)).tolist()
         select['moles'] = 0.
         for i,mn in select.iterrows():
-            d = dissect_oxide(mn['Formula'],endmembers=endmembers)
+            d = dissect_oxide(mn['Formula'],components=components)
             if d['complete']:
                 select.at[i,'ok']     = True
                 select.at[i,'x']      = d['x']
@@ -271,23 +317,23 @@ class BermanBrown84(object):
         select = select[select['ok']].copy().reset_index(drop=True).drop('ok',axis=1)
         return select
 
-    def sort_liquid_endmembers(self):
+    def sort_liquid_components(self):
         """
         In principle it should not be necessary to sort the Pandas database for the liquids
         (self.ldb), but depending on how external applications use it, it might lead to
-        confusion if the order of the endmember liquids is different from the ones given
-        in self.endmselect. So just to be on the safe side, we will order them here.
+        confusion if the order of the component liquids is different from the ones given
+        in self.compselect. So just to be on the safe side, we will order them here.
         """
         ldb = self.ldb.reset_index(drop=True).set_index('Formula')
-        ldb['idxendm'] = -1
-        for iend,endm in enumerate(self.endmselect):
-            ldb.at[endm,'idxendm'] = iend
+        ldb['idxcomp'] = -1
+        for icomp,comp in enumerate(self.compselect):
+            ldb.at[comp,'idxcomp'] = icomp
         self.ldb = ldb.sort_index().reset_index()
 
     def compute_DfG_with_mole_fraction_weighting(self,mdb,T,no_mfDfG=False):
         """
         After having removed all minerals from the mdb database that are not part of the
-        endmember system with extract_from_mineral_database_based_on_endmembers(mdb,endmembers),
+        component system with extract_from_mineral_database_based_on_components(mdb,components),
         and (with the same function) computed the mole fractions x, we can now compute the
         Gibbs free energies for all remaining minerals.
     
@@ -302,12 +348,12 @@ class BermanBrown84(object):
         1 bar, we (for now) omit the p-dependency, and take p=1bar as standard value.
     
         The mass-fraction-weighted version of DfG means, e.g., that with 0.333 mole of SiO2 and
-        0.667 mole of MgO (in total 1 mole worth of endmembers) you can create 0.333 mole of
+        0.667 mole of MgO (in total 1 mole worth of components) you can create 0.333 mole of
         Mg2SiO4. So mfDfG=0.333*DfG for Mg2SiO4 where DfG is the Delta_f G for 1 mole of Mg2SiO4.
     
         Note: mdb must have a column 'moles' (how many moles of that mineral can we create from
-              1 mole total of endmembers). It is easiest to use the function
-              extract_from_mineral_database_based_on_endmembers(mdb,endmembers) to automatically
+              1 mole total of components). It is easiest to use the function
+              extract_from_mineral_database_based_on_components(mdb,components) to automatically
               add this column. If you do not want to compute mfDfG (the Delta_f G for mdb['mole']
               amounts of moles of mineral), you get set no_mfDfG=True
     
@@ -324,9 +370,125 @@ class BermanBrown84(object):
         if T!=self.T: self.reset(T)
         mdb['DfG']   = 1e90   # The DfG per mole of this substance
         if not no_mfDfG:
-            mdb['mfDfG'] = 1e90   # The DfG per mole of the constituent endmembers
+            mdb['mfDfG'] = 1e90   # The DfG per mole of the constituent components
         for i,row in mdb.iterrows():
             DfG                = self.get_mu0_at_T(mdb,row['Abbrev'],T)
             mdb.at[i,'DfG']    = DfG
             if not no_mfDfG:
                 mdb.at[i,'mfDfG']  = DfG * row['moles']
+
+    # The functions below are not used by PhaseHull, but are more convenient for
+    # other uses.
+
+    def DaG(self,formula,phase,T,P=1.,name=None):
+        """
+        (convenience wrapper)
+        Apparent Delta Gibbs energy of formation from the elements. So you form the compound
+        at 298.15 K from the standard state of the elements, and then you heat up to the
+        desired temperature. See Berman 1988 for more details. The equation is:
+
+           Delta_a G = Delta_a H - T*S
+
+        in units of [J/mol], where
+
+           Delta_a H = Delta_f H(298.15) + int_298.15^T C_p(T)dT
+           S         = S(298.15)         + int_298.15^T C_p(T)/T dT
+
+        Arguments:
+
+          formula    String chemical formula, e.g., 'Ca2SiO4'
+
+          phase      String phase, e.g., 'sol' or 'liq'
+
+          T          Temperature in [K]. Can be scalar or array.
+
+          name       In case a formula has multiple different crystal structure
+                     options, this name helps identify which one to use. If not
+                     specified, this function will take the first one in the
+                     mineral database.
+        
+        Returns:
+
+          Delta_a G  The apparent Delta Gibbs energy of formation from the elements in [J/mol]
+
+        Note about liquids:
+
+          In the model here, we have liquid data only for the system components (SiO2, Al2O3, CaO).
+          The liquid versions of all other solid/crystal phases must be calculated using the Margules
+          model. But it has to be kept in mind that e.g. "liquid Ca2SiO4" is just a "liquid mixture
+          of CaO and SiO2 at a ratio of 2/3 to 1/3". So it is constructed/computed, not obtained from
+          a table.
+
+        Note about solids:
+
+          For some chemical formulae, there exist multiple crystal types. Use the name keyword to
+          select. Otherwise a random crystal is automatically chosen.
+        
+        Note about the factor:
+
+          The DaG produced here is the Delta_g G of one mole of the full formula, not one
+          mole of the constituating system components (as is used in PhaseHull). So for
+          Mg2SiO4 it is for 1 mole of Mg2SiO4 (which is made up of 2 moles of MgO and 1
+          mole of SiO2, but that is irrelevant). This is why for the liquid phase we have
+          to multiply by that factor of sum_i nu_i (in case of Mg2SiO4 that is 3), because
+          the Gfunc() function returns the value for 1 mole of constituating components.
+        
+        """
+        if phase=='l' or phase=='liq' or phase=='melt':
+            ldb = self.ldb
+            d = dissect_oxide(formula,components=self.components)
+            if d['complete']:
+                if np.isscalar(T):
+                    if np.isscalar(P):
+                        Tgrid = np.array([T])
+                    else:
+                        Tgrid = np.zeros(len(P)) + T
+                else:
+                    Tgrid = T
+                if np.isscalar(P):
+                    if np.isscalar(T):
+                        Pgrid = np.array([P])
+                    else:
+                        Pgrid = np.zeros(len(T)) + P
+                else:
+                    Pgrid = P
+                x   = d['x']
+                DaG = np.zeros(len(Tgrid))
+                for i in range(len(Tgrid)):
+                    self.reset_liquid(Tgrid[i],Pgrid[i])
+                    DaG[i] = self.Gfunc(x)
+                if np.isscalar(T):
+                    DaG = DaG[0]
+                factor = np.array(list(d['nu'].values())).sum()
+                DaG *= factor
+            else:
+                raise ValueError(f'Error: Could not dissect {formula} into components {self.components}.')
+        elif phase=='s' or phase=='sol' or phase=='cr' or phase=='cryst':
+            mdb = self.mdb
+            mdb = mdb[mdb['Formula']==formula]
+            if len(mdb)==0:
+                raise ValueError(f'Error: Could not find formula {formula} in solid mineral database.')
+            elif len(mdb)==1:
+                row = mdb.iloc[0]
+            else:
+                if name is not None:
+                    if name in list(mdb['Abbrev']):
+                        mdb = mdb[mdb['Abbrev']==name]
+                    elif name in list(mdb['Mineral']):
+                        mdb = mdb[mdb['Mineral']==name]
+                    else:
+                        raise ValueError(f'Error: Could not find formula {formula} with name {name} in solid mineral database.')
+                    if len(mdb)>1:
+                        raise ValueError(f'Error: Found more than one formula {formula} with name {name} in solid mineral database.')
+                    row = mdb.iloc[0]
+                else:
+                    print(f'Found more than one possible crystals matching {formula}. Options are:')
+                    for name in list(mdb['Abbrev']):
+                        print(name)
+                    row  = mdb.iloc[0]
+                    name = row['Mineral']
+                    print(f'Taking arbitrary one: {name}')
+            DaG = self.get_mu0_at_T(self.mdb,row['Abbrev'],T)
+        else:
+            raise ValueError(f'Error: I do not know phase {phase}')
+        return DaG

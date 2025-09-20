@@ -42,7 +42,7 @@ def find_liquidus_x_of_a_crystal_given_TP_and_dx(model,mineral,T,P,dx,nitermax=3
       P         Pressure [bar]
 
       dx        Direction in mole fraction space. Array of length number of
-                endmembers. Must sum to 0. The liquidus will then be sought
+                components. Must sum to 0. The liquidus will then be sought
                 along the line xs + s * dx, where xs is the composition of
                 the crystal, and s is a scalar obeying 0<=s<=dist, where dist
                 is the distance from xs along this direction to the edge of
@@ -63,19 +63,19 @@ def find_liquidus_x_of_a_crystal_given_TP_and_dx(model,mineral,T,P,dx,nitermax=3
     """
     from scipy.optimize import brentq
     assert np.abs(dx.sum())<1e-10, 'Error: Direction dx does not sum to 0.'
-    nendm   = len(model.endmselect)
+    ncomp   = len(model.compselect)
     Rgas    = 8.314
     # Make sure that the model is reset to the correct temperature and pressure
     model.reset(T,P)
     # Get the chemical potential and composition of the crystal solid
     mn      = model.mdb.set_index('Abbrev').loc[mineral]
-    nu      = ph.dissect_oxide(mn['Formula'],endmembers=model.endmselect)['nuendm']
+    nu      = ph.dissect_oxide(mn['Formula'],components=model.compselect)['nucomp']
     xs      = nu/nu.sum()
     mucryst = model.get_mu0_at_T(model.mdb,mineral,T)
     # Find the distance to the edge of the domain
     dist    = 1e99
     iiend   = -1
-    for iend in range(nendm):
+    for iend in range(ncomp):
         if dx[iend]!=0:
             s = -xs[iend]/dx[iend]
             if s==0 and dx[iend]<0:
@@ -85,14 +85,14 @@ def find_liquidus_x_of_a_crystal_given_TP_and_dx(model,mineral,T,P,dx,nitermax=3
                 iiend = iend
     assert iiend>=0 and dist<1e90, 'Weird error'
     # Get the G values of the liquid end members
-    Gliqend = np.zeros(nendm)
-    for iend in range(nendm):
-        xend = np.zeros((1,nendm))
+    Gliqend = np.zeros(ncomp)
+    for iend in range(ncomp):
+        xend = np.zeros((1,ncomp))
         xend[0,iend]  = 1.
-        Gliqend[iend] = model.compute_G_of_liquid_mixture(model.ldb,T,xend,model.endmselect)[0]
+        Gliqend[iend] = model.compute_G_of_liquid_mixture(model.ldb,T,xend,model.compselect)[0]
     # Set up the function to find the root of
     def fun(s):
-        x     = np.zeros([1,nendm])
+        x     = np.zeros([1,ncomp])
         x[0,:]= xs + dx*s
         gamma = model.margules.get_activity_coefficients_of_components(x,T,P).T
         muliq = (nu*(Gliqend+Rgas*T*np.log(x*gamma+1e-99))).sum(axis=-1)[0]
