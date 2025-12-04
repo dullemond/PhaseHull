@@ -163,7 +163,7 @@ class PhaseHull(object):
     to be provided as arguments to this class.
     """
     def __init__(self,components,crystals=None,liquids=None,T=None,P=None,nres0=30,nrefine=4,nfact=2,nspan=2, \
-                 min_nr_tielines=2,nocompute=False,incl_ptnames=False,incl_xvals=True,incl_Gvals=True,        \
+                 min_nr_tielines=2,nocompute=False,incl_ptnames=True,incl_xvals=True,incl_Gvals=True,        \
                  incl_Gcen=False,incl_xcen=False,incl_xtie=False,mrcrit=10.):
         """
         Arguments:
@@ -2153,6 +2153,8 @@ class PhaseHull(object):
         for each liquid from the self.liquids list. This is done with this
         function. 
         """
+        if type(x) is list: x=np.array(x)
+        if len(x.shape)==1: x=x[None,:]
         if not hasattr(self,'bigX_component_names'):
             self.make_component_name_list_for_big_X_vector()
         simplices = self.thesimplices[ilevel]

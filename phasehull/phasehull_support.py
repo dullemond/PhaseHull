@@ -1273,3 +1273,23 @@ def latexify_chemical_formula(s):
         i+=1
     s=s.strip()
     return s
+
+def convert_DL_to_LD(DL):
+    """
+    Convert a dict of lists into a list of dicts (quasi a transpose).
+    This can be useful for producing a list of simplices with each
+    containing the full properties of the simplex.
+    https://stackoverflow.com/questions/5558418/list-of-dicts-to-from-dict-of-lists
+    """
+    return [dict(zip(DL,t)) for t in zip(*DL.values())]
+
+def convert_LD_to_DL(LD):
+    """
+    Convert a list of dicts into a dict of lists (quasi a transpose).
+    https://stackoverflow.com/questions/5558418/list-of-dicts-to-from-dict-of-lists
+    """
+    try:
+        return {k: [dic[k] for dic in LD] for k in LD[0]}
+    except:
+        common_keys = set.intersection(*map(set, LD))
+        return {k: [dic[k] for dic in LD] for k in common_keys}
