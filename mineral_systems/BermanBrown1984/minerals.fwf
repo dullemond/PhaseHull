@@ -13,8 +13,8 @@ Pseudowollastonite      PsWo    CaSiO3         Pseudowollastonite      -1626.056
 Rankinite               Rank    Ca3Si2O7       Rankinite               -3940.436  213.390   96.506  339.510  -3384403.   -772.17   -12621.25
 b-larnite               b-lr    Ca2SiO4        Beta larnite            -2310.140  125.950   51.600  247.882         0   -2059.37        0   
 g-larnite               g-lr    Ca2SiO4        Gamma larnite           -2320.294  118.840   59.110  241.921         0   -1997.54        0   
-a’-larnite              a-lr    Ca2SiO4        Alpha’ larnite          -2309.060  127.622   59.298  252.572         0   -2182.967       0   
-a-larnite               Larn    Ca2SiO4        Alpha larnite           -2289.259  143.296   52.456  235.676         0   -1891.23        0   
+a’-larnite              a-lr    Ca2SiO4        Alpha’ larnite          -2309.060  127.622   52.298  252.572         0   -2182.967       0   
+a-larnite               Larn    Ca2SiO4        Alpha larnite           -2289.259  143.296   52.458  235.676         0   -1891.23        0   
 Tricalcium silicate     C3S1    Ca3SiO5        Tricalcium silicate     -2943.382  166.020   72.742  322.749         0   -2409.16    -3383.01
 Tricalcium aluminate    C3A1    Ca3Al2O6       Tricalcium aluminate    -3606.151  207.950    0      304.519         0       0      -28244.70
 Calcium aluminate       C1A1    CaAl2O4        Calcium aluminate       -2330.292  115.348    0      220.693  -1372400.  -1461.31        0   
