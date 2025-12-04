@@ -1,0 +1,7 @@
+Here we provide a set of databases of mineral thermochemical properties, from different papers. Each database should only be used in itself, and not mixed with the other databases. The reason for this is that each database, obtained from the respective paper, was compiled by those authors as internally self-consistent. By mixing data from different databases, it cannot be guaranteed that the phase diagrams will have the correct (or at least intended) behavior.
+
+Many of these databases were created by copy-pasting the numbers from tables in the PDF versions of the original papers. Those PDF versions were often scanned versions from printed copies. This has led to numerous conversion errors by the image recognition software when it converted these tables into ASCII tables. These were corrected by hand. During this painstaking process, some errors will likely have remained or were introduced. We therefore cannot, and will not, take responsibility for the correctness of these databases. If you spot errors, please inform us.
+
+We provide Python functions to read the tables. While we have tested the validity of these functions, we cannot, and will not, take responsibility for the correctness of these Python functions, nor for the way they are used in the PhaseHull examples.
+
+2025-10-03
