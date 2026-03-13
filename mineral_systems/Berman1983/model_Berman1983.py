@@ -104,7 +104,7 @@ class Berman83(object):
         if len(x.shape)==1:
             x = np.array([x,])
         assert x.shape[-1]==len(self.compselect), 'Error: Dimension of x incorrect.'
-        G = self.compute_G_of_liquid_mixture(self.ldb,self.T,x,self.compselect)
+        G = self.compute_G_of_liquid_mixture(self.ldb,self.T,self.P,x,self.compselect)
         return G
 
     def get_Margules(self):
@@ -211,7 +211,7 @@ class Berman83(object):
 
         return WH, WS
 
-    def compute_G_of_liquid_mixture(self,ldb,T,x,components,nomixG=False,
+    def compute_G_of_liquid_mixture(self,ldb,T,P,x,components,nomixG=False,
                                     incl_linear=True,incl_ideal=True,
                                     incl_nonideal=True):
         """
