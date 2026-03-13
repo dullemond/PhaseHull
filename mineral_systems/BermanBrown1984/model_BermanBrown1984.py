@@ -104,7 +104,7 @@ class BermanBrown84(object):
         if len(x.shape)==1:
             x = np.array([x,])
         assert x.shape[-1]==len(self.compselect), 'Error: Dimension of x incorrect.'
-        G = self.compute_G_of_liquid_mixture(self.ldb,self.T,x,self.compselect)
+        G = self.compute_G_of_liquid_mixture(self.ldb,self.T,self.P,x,self.compselect)
         return G
 
     def get_Margules(self):
@@ -154,7 +154,7 @@ class BermanBrown84(object):
     
         return WH, WS
 
-    def compute_G_of_liquid_mixture(self,ldb,T,x,components,nomixG=False,
+    def compute_G_of_liquid_mixture(self,ldb,T,P,x,components,nomixG=False,
                                     incl_linear=True,incl_ideal=True,
                                     incl_nonideal=True):
         """
@@ -367,7 +367,7 @@ class BermanBrown84(object):
           modifies the mdb database in-place.
         
         """
-        if T!=self.T: self.reset(T)
+        #if T!=self.T: self.reset(T)
         mdb['DfG']   = 1e90   # The DfG per mole of this substance
         if not no_mfDfG:
             mdb['mfDfG'] = 1e90   # The DfG per mole of the constituent components
