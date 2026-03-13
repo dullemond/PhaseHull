@@ -16,7 +16,7 @@ import scipy
 #                        Solids (crystals)
 #-----------------------------------------------------------------------
 
-def extract_from_mineral_database_based_on_components(mdb,components):
+def extract_from_mineral_database_based_on_components(mdb,components,factors=None):
     """
     Given a list of minerals in Pandas dataframe mdb (see read_minerals_and_liquids()), select only
     those minerals that are composed of the components given in the list components. Also add
@@ -27,6 +27,14 @@ def extract_from_mineral_database_based_on_components(mdb,components):
       mdb              The mineral database (see read_minerals_and_liquids())
       components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
 
+    Optional:
+
+      factors          If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+    
     Returns:
 
       select           A version of mdb with only the minerals that can be created
@@ -39,16 +47,21 @@ def extract_from_mineral_database_based_on_components(mdb,components):
     """
     nm     = len(mdb)
     nem    = len(components)
+    if factors is None:
+        factors = np.ones(len(components))
     select = mdb.copy()
     select['ok']    = False
     select['x']     = np.zeros((nm,nem)).tolist()
     select['moles'] = 0.
+    select['mfDfG'] = 0.
     for i,mn in select.iterrows():
-        d = dissect_oxide(mn['Formula'],components=components)
-        if d['complete']:
+        d = dissect_oxide(mn['Formula'],components=components,weights=factors)
+        if d['complete'] and d['positive']:
             select.at[i,'ok']     = True
             select.at[i,'x']      = d['x']
             select.at[i,'moles']  = d['moles']
+            if 'DfG' in select.columns and 'mfDfG' in select.columns:
+                select.at[i,'mfDfG']  = d['moles']*select.at[i,'DfG']
     select = select[select['ok']].copy().reset_index(drop=True).drop('ok',axis=1)
     return select
 
@@ -202,12 +215,122 @@ def compute_mu_of_liquid_for_given_mineral_stoichiometry_and_activity_coefficien
 #                          General functions
 #-----------------------------------------------------------------------
 
+def element_masses_MELTS():
+    # These element masses are taken from the MELTS code
+    return {"H" :   1.0079  ,
+            "He":   4.00260 ,
+            "Li":   6.94    ,
+            "Be":   9.01218 ,
+            "B" :  10.81    ,
+            "C" :  12.011   ,
+            "N" :  14.0067  ,
+            "O" :  15.9994  ,
+            "F" :  18.998403,
+            "Ne":  20.179   ,
+            "Na":  22.98977 ,
+            "Mg":  24.305   ,
+            "Al":  26.98154 ,
+            "Si":  28.0855  ,
+            "P" :  30.97376 ,
+            "S" :  32.06    ,
+            "Cl":  35.453   ,
+            "Ar":  39.948   ,
+            "K" :  39.102   ,
+            "Ca":  40.08    ,
+            "Sc":  44.9559  ,
+            "Ti":  47.90    ,
+            "V" :  50.9415  ,
+            "Cr":  51.996   ,
+            "Mn":  54.9380  ,
+            "Fe":  55.847   ,
+            "Co":  58.9332  ,
+            "Ni":  58.71    ,
+            "Cu":  63.546   ,
+            "Zn":  65.38    ,
+            "Ga":  69.735   ,
+            "Ge":  72.59    ,
+            "As":  74.9216  ,
+            "Se":  78.96    ,
+            "Br":  79.904   ,
+            "Kr":  83.80    ,
+            "Rb":  85.4678  ,
+            "Sr":  87.62    ,
+            "Y" :  88.9059  ,
+            "Zr":  91.22    ,
+            "Nb":  92.9064  ,
+            "Mo":  95.94    ,
+            "Tc":  98.9062  ,
+            "Ru": 101.07    ,
+            "Rh": 102.9055  ,
+            "Pd": 106.4     ,
+            "Ag": 107.868   ,
+            "Cd": 112.41    ,
+            "In": 114.82    ,
+            "Sn": 118.69    ,
+            "Sb": 121.75    ,
+            "Te": 127.60    ,
+            "I" : 126.9045  ,
+            "Xe": 131.30    ,
+            "Cs": 132.9054  ,
+            "Ba": 137.33    ,
+            "La": 138.9055  ,
+            "Ce": 140.12    ,
+            "Pr": 140.9077  ,
+            "Nd": 144.24    ,
+            "Pm": 145.      ,
+            "Sm": 150.4     ,
+            "Eu": 151.96    ,
+            "Gd": 157.25    ,
+            "Tb": 158.9254  ,
+            "Dy": 162.50    ,
+            "Ho": 164.9304  ,
+            "Er": 167.26    ,
+            "Tm": 168.9342  ,
+            "Yb": 173.04    ,
+            "Lu": 174.967   ,
+            "Hf": 178.49    ,
+            "Ta": 180.9479  ,
+            "W" : 183.85    ,
+            "Re": 186.207   ,
+            "Os": 190.2     ,
+            "Ir": 192.22    ,
+            "Pt": 195.09    ,
+            "Au": 196.9665  ,
+            "Hg": 200.59    ,
+            "Tl": 204.37    ,
+            "Pb": 207.2     ,
+            "Bi": 208.9804  ,
+            "Po": 209.      ,
+            "At": 210.      ,
+            "Rn": 222.      ,
+            "Fr": 223.      ,
+            "Ra": 226.0254  ,
+            "Ac": 227.      ,
+            "Th": 232.0381  ,
+            "Pa": 231.0359  ,
+            "U" : 238.029   ,
+            "Np": 237.0482  ,
+            "Pu": 244.      ,
+            "Am": 243.      ,
+            "Cm": 247.      ,
+            "Bk": 247.      ,
+            "Cf": 251.      ,
+            "Es": 254.      ,
+            "Fm": 257.      ,
+            "Md": 258.      ,
+            "No": 259.      ,
+            "Lw": 260.      ,
+            "Rf": 260.      ,
+            "Ha": 260.      }
+
 def dissect_molecule(spec):
     """
     Returns the elements of which this molecule is made, their order, the total mass and the total charge.
     """
-    theelements = {'H':1,'D':2,'He':4,'C':12,'N':14,'O':16,'S':32,'P':31,'Fe':56,'Si':28,'Na':23,'Mg':24,'Cl':35,'K':39,'F':19,'Al':27,'Ca':40,'Ti':48,'Cr':52,'Mn':55,'Co':59,'Ni':59}
-    groups      = {'(OH)':17,'(H2O)':18,'(CO2)':44,'(CO3)':60,'(PO4)':95}
+    #theelements = {'H':1,'D':2,'He':4,'C':12,'N':14,'O':16,'S':32,'P':31,'Fe':56,'Si':28,'Na':23,'Mg':24,'Cl':35,'K':39,'F':19,'Al':27,'Ca':40,'Ti':48,'Cr':52,'Mn':55,'Co':59,'Ni':59}
+    #theelements = {'H':1., 'D':2., 'He':4., 'Li':6.94, 'Be':9.01, 'B':10.81, 'C':12.01, 'N':14.01, 'O':16., 'F':19., 'Ne':20.18, 'Na':22.99, 'Mg':24.31, 'Al':26.98, 'Si':28.09, 'P':30.97, 'S':32.06, 'Cl':35.45, 'Ar':39.95, 'K':39.10, 'Ca':40.08, 'Sc':44.96, 'Ti':47.87, 'V':50.94, 'Cr':52., 'Mn':54.94, 'Fe':55.85, 'Co':58.93, 'Ni':58.69, 'Cu':63.55, 'Zn':65.38, 'Ga':69.72, 'Ge':72.63}
+    theelements = element_masses_MELTS()
+    groups      = {'(OH)':17.,'(H2O)':18.,'(CO2)':44.,'(CO3)':60.,'(PO4)':94.97}
     if spec=='e-':
         return {'e':1},0,-1
     else:
@@ -375,6 +498,10 @@ def dissect_oxide(formula,components=None,weights=None):
                 contains_iron = True
                 Fenu    = mol[m]
             else:
+                if m=='H':
+                    raise ValueError(f'Formula {formula}: In oxides (minerals) hydrogen H must always be grouped in an (OH) or (H2O) group. Please adapt the formula.')
+                if m=='C':
+                    raise ValueError(f'Formula {formula}: In oxides (minerals) carbon C must always be grouped in a (CO2) or (CO3) group. Please adapt the formula.')
                 assert m in formula_units_mult.keys(), f'Error: Oxide has unknown component {m}'
                 nu[m]   = mol[m]/formula_units_mult[m]
                 unit[m] = formula_units_name[m]
@@ -500,12 +627,19 @@ def dissect_oxide(formula,components=None,weights=None):
             elems = list(np.array(elems)[list(combi)])
             # Now hope this avoids a degenerate matrix...
 
+        # If we use weights (meaning a component is actually weight*component), then
+        # scale the components_units
+        for i in range(ncomp):
+            for k in range(ncomp):
+                if units[k] in components_units[i]:
+                    components_units[i][units[k]] *= weights[i]
+        
         # Create the matrix that converts from vector of component moles to vector of element moles.
         matrix = np.zeros((ncomp,ncomp))    # Matrix[index_of_element,index_of_component]
         for i in range(ncomp):
             for k in range(ncomp):
                 if units[k] in components_units[i]:
-                    matrix[k,i]  = weights[i]*components_units[i][units[k]]
+                    matrix[k,i]  = components_units[i][units[k]]
 
         # Invert this matrix to get the conversion from vector of element moles to vector of component moles
         matinv = scipy.linalg.inv(matrix)   # Matinv[index_of_component,index_of_element]
@@ -555,7 +689,7 @@ def dissect_oxide(formula,components=None,weights=None):
             else:
                 if actual_units[u] != reconstruct_units[u]:
                     complete = False
-
+        
         # Check if all x are positive
         positive = np.all(x>=0)
 
@@ -567,25 +701,26 @@ def dissect_oxide(formula,components=None,weights=None):
     return answer
 
 #-----------------------------------------------------------------------
-#                  Simplices, components, hyperplanes
+#                   Conversions moles <--> mass
 #-----------------------------------------------------------------------
 
-def convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=None,return_also_mtot=False,inplace=False):
+def convert_mole_fraction_into_mass_fraction(components,x,mdb=None,icomponents=None,return_also_mtot=False,inplace=False,factors=None):
     """
     If you have a mole fraction x (such that x.sum(axis=-1)==1), or an array
     of them (again such that x.sum(axis=-1)==1, so x[...,:]), then you can
     convert them into mass fractions xm (again such that xm.sum(axis=-1)==1)
     with this function.
 
-    Arguments;
+    Arguments:
 
-      mdb              The mineral database (see read_minerals_and_liquids())
       components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
       x                Mole fraction x values. E.g. x = np.array([0.2,0.3,0.5]) or an
                        array of them, e.g. x = np.array([[0.2,0.3,0.5],[0.1,0.4,0.5]])
 
     Optional:
 
+      mdb              The mineral database (see read_minerals_and_liquids())
+    
       icomponents      Indices (in the mdb database) of the component minerals,
                        so that these do not have to be first found in the database,
                        if you already know them. Just for speed-up.
@@ -599,6 +734,12 @@ def convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=None,r
                        and not return anything. Note: This option ignores the given
                        x-values and instead uses those of the database.
 
+      factors          If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
     Returns (if not inplace):
 
       xm               Array of the same dimension as x, but this time with the
@@ -611,26 +752,32 @@ def convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=None,r
       mdb updated with new columns 'xmass' and 'mfDfGmass'
 
     """
-    if inplace:
-        x = np.stack(np.array(mdb['x']))
-    if icomponents is None:
-        icomponents,DfGcomponents = identify_component_minerals(mdb,components)
-    componmass = np.zeros(len(icomponents))
-    for k in range(len(icomponents)):
-        i               = icomponents[k]
-        formula         = mdb.iloc[i]['Formula']
+    if mdb is not None:
+        if inplace:
+            x = np.stack(np.array(mdb['x']))
+        if icomponents is None:
+            icomponents,DfGcomponents = identify_component_minerals(mdb,components)
+    componmass = np.zeros(len(components))
+    if factors is None:
+        factors = np.ones(len(components))
+    for k in range(len(components)):
+        if mdb is not None:
+            i           = icomponents[k]
+            formula     = mdb.iloc[i]['Formula']
+        else:
+            formula     = components[k]
         mol,mass,charge = dissect_molecule(formula)
-        componmass[k]   = mass
+        componmass[k]   = mass*factors[k]
     if len(x.shape)==1:
         mtot = 0.
     else:
         mtot = np.zeros_like(x[...,0])
-    for k in range(len(icomponents)):
+    for k in range(len(components)):
         mtot += x[...,k]*componmass[k]
     xm = np.zeros_like(x)
-    for k in range(len(icomponents)):
+    for k in range(len(components)):
         xm[...,k] = x[...,k]*componmass[k]/mtot
-    if inplace:
+    if inplace and mdb is not None:
         mdb['xmass'] = xm.tolist()
         if 'mfDfG' in mdb.columns:
             mdb['mfDfGmass'] = mdb['mfDfG']/mtot
@@ -640,7 +787,37 @@ def convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=None,r
         else:
             return xm
 
-def convert_mass_fraction_into_mole_fraction(mdb,components,xmass,icomponents=None,return_also_moltot=False):
+def convert_moles_into_mass(components,n,factors=None):
+    """
+    Like convert_mole_fraction_into_mass_fraction() but now not for fractions
+    but for the amount of moles or grams.
+    
+    Arguments:
+
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
+      n                Mole n values. E.g. n = np.array([2,3,5]) or an
+                       array of them, e.g. n = np.array([[2,3,5],[1,4,5]])
+
+    Optional:
+
+      factors          If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
+    Returns:
+
+      m                The amount of grams in each component
+    """
+    xm, mtot = convert_mole_fraction_into_mass_fraction(components,n,return_also_mtot=True,factors=factors)
+    if len(n.shape)==1:
+        m = xm * mtot
+    else:
+        m = xm[...,:] * mtot[:,None]
+    return m
+    
+def convert_mass_fraction_into_mole_fraction(components,xmass,mdb=None,icomponents=None,return_also_moltot=False,factors=None):
     """
     The inverse of convert_mole_fraction_into_mass_fraction().
 
@@ -649,15 +826,16 @@ def convert_mass_fraction_into_mole_fraction(mdb,components,xmass,icomponents=No
     convert them into mole fractions xmol (again such that xmol.sum(axis=-1)==1)
     with this function.
 
-    Arguments;
+    Arguments:
 
-      mdb              The mineral database (see read_minerals_and_liquids())
       components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
       xmass            Mass fraction x values. E.g. x = np.array([0.2,0.3,0.5]) or an
                        array of them, e.g. x = np.array([[0.2,0.3,0.5],[0.1,0.4,0.5]])
 
     Optional:
 
+      mdb              The mineral database (see read_minerals_and_liquids())
+    
       icomponents      Indices (in the mdb database) of the component minerals,
                        so that these do not have to be first found in the database,
                        if you already know them. Just for speed-up.
@@ -667,7 +845,13 @@ def convert_mass_fraction_into_mole_fraction(mdb,components,xmass,icomponents=No
                        Gibbs function by mtot) to obtain the Gibbs per gram
                        instead.
 
-    Returns (if not inplace):
+      factors          If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
+    Returns:
 
       xmol             Array of the same dimension as x, but this time with the
                        mole fractions instead of the mass fractions.
@@ -675,28 +859,68 @@ def convert_mass_fraction_into_mole_fraction(mdb,components,xmass,icomponents=No
       moltot           (if return_also_moltot==True) the nr of moles of 1 g of this mineral.
 
     """
-    if icomponents is None:
-        icomponents,DfGcomponents = identify_component_minerals(mdb,components)
-    componmol = np.zeros(len(icomponents))
-    for k in range(len(icomponents)):
-        i               = icomponents[k]
-        formula         = mdb.iloc[i]['Formula']
+    if mdb is not None:
+        if icomponents is None:
+            icomponents,DfGcomponents = identify_component_minerals(mdb,components)
+    componmol = np.zeros(len(components))
+    if factors is None:
+        factors = np.ones(len(components))
+    for k in range(len(components)):
+        if mdb is not None:
+            i           = icomponents[k]
+            formula     = mdb.iloc[i]['Formula']
+        else:
+            formula     = components[k]
         mol,mass,charge = dissect_molecule(formula)
-        componmol[k]    = 1/mass
+        componmol[k]    = 1/(mass*factors[k])
     if len(xmass.shape)==1:
         moltot = 0.
     else:
         moltot = np.zeros_like(xmass[...,0])
-    for k in range(len(icomponents)):
+    for k in range(len(components)):
         moltot += xmass[...,k]*componmol[k]
     xmol = np.zeros_like(xmass)
-    for k in range(len(icomponents)):
+    for k in range(len(components)):
         xmol[...,k] = xmass[...,k]*componmol[k]/moltot
     if return_also_moltot:
         return xmol,moltot
     else:
         return xmol
     
+def convert_mass_into_moles(components,m,factors=None):
+    """
+    Like convert_mass_fraction_into_mole_fraction(), but now without fractions,
+    so for masses in g to moles.
+    
+    Arguments:
+
+      components       List of the formulae of the components, e.g. ['SiO2','MgO','Al2O3'].
+      m                Mass values. E.g. m = np.array([2,3,5]) or an
+                       array of them, e.g. x = np.array([[2,3,5],[1,4,5]])
+
+    Optional:
+
+      factors          If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
+    Returns:
+
+      n                The number of moles
+    """
+    x,ntot = convert_mass_fraction_into_mole_fraction(components,m,return_also_moltot=True,factors=factors)
+    if len(m.shape)==1:
+        n = x * ntot
+    else:
+        n = x[...,:] * ntot[:,None]
+    return n
+    
+#-----------------------------------------------------------------------
+#                  Simplices, components, hyperplanes
+#-----------------------------------------------------------------------
+
 def interpolate_on_simplex(x,plane_x,plane_mfDfGs):
     """
     Suppose you have a substance at mole-fractional position x (an N-dimensional vector
@@ -707,12 +931,12 @@ def interpolate_on_simplex(x,plane_x,plane_mfDfGs):
 
     Arguments:
 
-      x[0:N]              Mole fractions of substance in terms of components. Sum should be 1.
-      plane_x[0:N,0:N]    Mole fractions of N substances with known mfDfG values. Left index
-                          is the index of the N substances. Right index is same as x[0:N],
+      x[0:M]              Mole fractions of substance in terms of components. Sum should be 1.
+      plane_x[0:M,0:M]    Mole fractions of M substances with known mfDfG values. Left index
+                          is the index of the M substances. Right index is same as x[0:M],
                           where plane_x[:,:].sum(axis=-1)==1. That is: plane_x[i] is a vector
                           like x, summing to 1.
-      plane_mfDfGs[0:N]   The mass-fraction-weighted Delta_f G values of all the points of
+      plane_mfDfGs[0:M]   The mass-fraction-weighted Delta_f G values of all the points of
                           plane_x. The mass-fraction-weighted means, e.g., that with 0.333 mole
                           of SiO2 and 0.667 mole of MgO (in total 1 mole worth of components)
                           you can create 0.333 mole of Mg2SiO4. So mfDfG=0.333*DfG for Mg2SiO4
@@ -722,19 +946,42 @@ def interpolate_on_simplex(x,plane_x,plane_mfDfGs):
 
       mfDfG               The interpolated value of mfDfG at this point on the simplex.
     """
-    from scipy import linalg
-    N = len(x)
-    assert N==len(plane_x), 'Error in linear interpolation on a simplex: plane_x does not have right nr of points.'
-    assert np.abs(x.sum()-1)<1e-6, 'Error in linear interpolation on a simplex: x does not sum to 1'
-    for i in range(len(x)):
-        assert N==len(plane_x[i]), 'Error in linear interpolation on a simplex: plane_x does not have right dimension.'
-        assert np.abs(plane_x[i].sum()-1)<1e-6, f'Error in linear interpolation on a simplex: plane_x[{i}][:] does not sum to 1'
-    evec = np.zeros((N-1,N-1))
-    for i in range(N-1):
-        evec[:,i] = plane_x[i][:-1]-plane_x[-1][:-1]
-    y = linalg.solve(evec, (x[:-1]-plane_x[-1][:-1]))
-    y = np.hstack((y,1-y.sum()))
+    y = lever_rule_on_simplex(x,plane_x)
     return (y*plane_mfDfGs).sum()
+
+def lever_rule_on_simplex(x,simplex_x):
+    """
+    For a simplex with M corners (meaning, a simplex in M-1-dimensional space), and a point
+    x inside that simplex, we can apply the lever rule to find the fraction eps_i of each corner
+    point i contributing to point x. This then allows linear interpolation of anything within
+    the simplex.
+
+    Arguments:
+
+      x[0:M]                Mole fractions of substance in terms of components. Sum should be 1.
+      simplex_x[0:M,0:M]    Mole fractions of M substances, also in terms of the system components.
+                            Left index is the index of the M substances. Right index is same as x[0:M],
+                            where simplex_x[:,:].sum(axis=-1)==1. That is: simplex_x[i] is a vector
+                            like x, summing to 1.
+
+    Returns:
+
+      y[0:M]                The fractional contribution of point i to vector x. These are the weights
+                            to be used for the linear interpolation within the simplex.
+    """
+    from scipy import linalg
+    M = len(x)
+    assert M==len(simplex_x), 'Error in lever rule on a simplex: simplex_x does not have right nr of points.'
+    assert np.abs(x.sum()-1)<1e-6, 'Error in lever rule on a simplex: x does not sum to 1'
+    for i in range(len(x)):
+        assert M==len(simplex_x[i]), 'Error in lever rule on a simplex: simplex_x does not have right dimension.'
+        assert np.abs(simplex_x[i].sum()-1)<1e-6, f'Error in linear interpolation on a simplex: simplex_x[{i}][:] does not sum to 1'
+    evec = np.zeros((M-1,M-1))
+    for i in range(M-1):
+        evec[:,i] = simplex_x[i][:-1]-simplex_x[-1][:-1]
+    y = linalg.solve(evec, (x[:-1]-simplex_x[-1][:-1]))
+    y = np.hstack((y,1-y.sum()))
+    return y
 
 def remove_all_minerals_with_DfG_above_component_plane(mdb,components):
     """
@@ -995,7 +1242,7 @@ def convert_points_from_mole_fraction_to_mass_fraction(mdb,components,pts):
     x        = np.zeros_like(ptsar)
     x[:,:-1] = ptsar[:,:-1]
     x[:,-1]  = 1-x[:,:-1].sum(axis=-1)
-    xm,mtot  = convert_mole_fraction_into_mass_fraction(mdb,components,x,icomponents=icomponents,return_also_mtot=True)
+    xm,mtot  = convert_mole_fraction_into_mass_fraction(components,x,mdb=mdb,icomponents=icomponents,return_also_mtot=True)
     ptsm     = ptsar.copy()
     ptsm[:,:-1] = xm[:,:-1]        # Replace the mole fraction with mass fraction
     ptsm[:,-1]  = ptsm[:,-1]/mtot  # Also correct the Gibbs energy from per mole to per gram
@@ -1033,7 +1280,7 @@ def convert_points_from_mass_fraction_to_mole_fraction(mdb,components,pts):
     x        = np.zeros_like(ptsar)
     x[:,:-1] = ptsar[:,:-1]
     x[:,-1]  = 1-x[:,:-1].sum(axis=-1)
-    xmol,moltot  = convert_mass_fraction_into_mole_fraction(mdb,components,x,icomponents=icomponents,return_also_moltot=True)
+    xmol,moltot  = convert_mass_fraction_into_mole_fraction(components,x,mdb=mdb,icomponents=icomponents,return_also_moltot=True)
     ptsmol        = ptsar.copy()
     ptsmol[:,:-1] = xmol[:,:-1]        # Replace the mole fraction with mass fraction
     ptsmol[:,-1]  = ptsmol[:,-1]/moltot  # Also correct the Gibbs energy from per mole to per gram
@@ -1181,77 +1428,77 @@ def ternary_fill(x,stype,scale=1,ax=None,done=False):
     if lincol is not None:
         ax.plot(y[:,0]*scale,y[:,1]*scale,color=lincol,linewidth=0.5)
 
-def plot_ternary_phases(simplices,scale=1,components=None):
-    import ternary
-    ddone   = {'allcryst':False,'liquid':False,'cryst_1_liq_1':False,'cryst_1_liq_2':False,'cryst_2_liq_1':False,'crystals':False,'inmisc_liquids':False}
-    #linest = {'allcryst':None,'liquid':None,'cryst_1_liq_1':'--','crystals':'o'}
-    figure, tax = ternary.figure(scale=scale)
-    print('Making ternary phases map')
-    ax = tax.ax
-    for isim in range(len(simplices['id'])):
-        x     = simplices['x'][isim]
-        ternary_fill(x,simplices['stype'][isim],scale=scale,ax=ax,done=ddone[simplices['stype'][isim]])
-        ddone[simplices['stype'][isim]] = True
-    print('Finished ternary phases map')
-    if components is not None:
-        tax.right_corner_label(components[0])
-        tax.top_corner_label(components[1])
-        tax.left_corner_label(components[2])
-    tax.get_axes().axis('off')
-    tax.clear_matplotlib_ticks()
-    ax.legend()
-    tax.show()
-    return tax
+#def plot_ternary_phases(simplices,scale=1,components=None):
+#    import ternary
+#    ddone   = {'allcryst':False,'liquid':False,'cryst_1_liq_1':False,'cryst_1_liq_2':False,'cryst_2_liq_1':False,'crystals':False,'inmisc_liquids':False}
+#    #linest = {'allcryst':None,'liquid':None,'cryst_1_liq_1':'--','crystals':'o'}
+#    figure, tax = ternary.figure(scale=scale)
+#    print('Making ternary phases map')
+#    ax = tax.ax
+#    for isim in range(len(simplices['id'])):
+#        x     = simplices['x'][isim]
+#        ternary_fill(x,simplices['stype'][isim],scale=scale,ax=ax,done=ddone[simplices['stype'][isim]])
+#        ddone[simplices['stype'][isim]] = True
+#    print('Finished ternary phases map')
+#    if components is not None:
+#        tax.right_corner_label(components[0])
+#        tax.top_corner_label(components[1])
+#        tax.left_corner_label(components[2])
+#    tax.get_axes().axis('off')
+#    tax.clear_matplotlib_ticks()
+#    ax.legend()
+#    tax.show()
+#    return tax
 
 #----------------------------------------------------------------------------------
 #                                Plotting stuff
 #----------------------------------------------------------------------------------
-
-def extract_1d_cut_from_liquid(xstart,xend,Gfunc,nx=100):
-    if type(xstart) is list: xstart=np.stack(xstart)
-    if type(xend) is list: xend=np.stack(xend)
-    s = np.linspace(0,1,nx)
-    x = xstart[None,:] * (1-s[:,None]) + xend[None,:] * s[:,None]
-    G = np.zeros(nx)
-    for i in range(nx):
-        G[i] = Gfunc(x[i])
-    return s,x,G
-
-def get_tie_lines_x_values_for_a_group(simplices,iselection,group,stride=1):
-    x = []
-    icnt = 0
-    for i in group:
-        isel = iselection[i]
-        if icnt==0:
-            x.append(simplices['xtieline'][isel])
-        icnt += 1
-        if icnt>=stride:
-            icnt = 0
-    x = np.stack(x)
-    return x
-
-def plot_tie_lines(xx,color=None):
-    for x in xx:
-        plt.plot(x[:,0]+0.5*x[:,1],(np.sqrt(3)/2)*x[:,1],'.-',color=color)
-
-def plot_binodal_curve(xx,color=None):
-    xl = xx[:,0,0]
-    xr = xx[:,1,0][::-1]
-    yl = xx[:,0,1]
-    yr = xx[:,1,1][::-1]
-    x  = np.hstack([xl,xr,[xl[0]]])
-    y  = np.hstack([yl,yr,[yl[0]]])
-    plt.plot(x+0.5*y,(np.sqrt(3)/2)*y,color=color)
-
-def plot_simplex(simplices,isel,fillcolor=None,linecolor=None,thick=None):
-    xx = simplices['x'][isel]
-    xx = np.vstack((xx,xx[0,:]))
-    x  = xx[:,0]+0.5*xx[:,1]
-    y  = np.sqrt(3)/2*xx[:,1]
-    if fillcolor is not None:
-        plt.fill(x,y,color=fillcolor)
-    if linecolor is not None:
-        plt.plot(x,y,color=linecolor,linewidth=thick)
+#
+#def extract_1d_cut_from_liquid(xstart,xend,Gfunc,nx=100):
+#    if type(xstart) is list: xstart=np.stack(xstart)
+#    if type(xend) is list: xend=np.stack(xend)
+#    s = np.linspace(0,1,nx)
+#    x = xstart[None,:] * (1-s[:,None]) + xend[None,:] * s[:,None]
+#    G = np.zeros(nx)
+#    for i in range(nx):
+#        G[i] = Gfunc(x[i])
+#    return s,x,G
+#
+#def get_tie_lines_x_values_for_a_group(simplices,iselection,group,stride=1):
+#    x = []
+#    icnt = 0
+#    for i in group:
+#        isel = iselection[i]
+#        if icnt==0:
+#            x.append(simplices['xtieline'][isel])
+#        icnt += 1
+#        if icnt>=stride:
+#            icnt = 0
+#    x = np.stack(x)
+#    return x
+#
+#def plot_tie_lines(xx,color=None):
+#    for x in xx:
+#        plt.plot(x[:,0]+0.5*x[:,1],(np.sqrt(3)/2)*x[:,1],'.-',color=color)
+#
+#def plot_binodal_curve(xx,color=None):
+#    xl = xx[:,0,0]
+#    xr = xx[:,1,0][::-1]
+#    yl = xx[:,0,1]
+#    yr = xx[:,1,1][::-1]
+#    x  = np.hstack([xl,xr,[xl[0]]])
+#    y  = np.hstack([yl,yr,[yl[0]]])
+#    plt.plot(x+0.5*y,(np.sqrt(3)/2)*y,color=color)
+#
+#def plot_simplex(simplices,isel,fillcolor=None,linecolor=None,thick=None):
+#    xx = simplices['x'][isel]
+#    xx = np.vstack((xx,xx[0,:]))
+#    x  = xx[:,0]+0.5*xx[:,1]
+#    y  = np.sqrt(3)/2*xx[:,1]
+#    if fillcolor is not None:
+#        plt.fill(x,y,color=fillcolor)
+#    if linecolor is not None:
+#        plt.plot(x,y,color=linecolor,linewidth=thick)
 
 
 #----------------------------------------------------------------------------------
@@ -1293,3 +1540,12 @@ def convert_LD_to_DL(LD):
     except:
         common_keys = set.intersection(*map(set, LD))
         return {k: [dic[k] for dic in LD] for k in common_keys}
+
+def get_row_from_DL(DL,irow):
+    """
+    Similar to convert_DL_to_LD(), but now extract only one single row.
+    """
+    row = {}
+    for col in DL:
+        row[col] = DL[col][irow]
+    return row

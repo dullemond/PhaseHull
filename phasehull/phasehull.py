@@ -15,24 +15,86 @@ from scipy.spatial import ConvexHull
 class CrystalDatabase(object):
     """
     Class for a database of the physical properties of fixed-composition phases, 
-    i.e., crystals with a well-defined stoichiometry. Each of these will be a single
-    point on the phase diagram.
+    i.e., minerals with a well-defined (typically stoichiometric) composition.
+    Each of these will be a single point on the phase diagram. For simplicity
+    of nomenclature we call these phases 'crystals' (although of course there
+    are many crystal solid solutions with continuous compositions, see the
+    class SolidSolution below)
+
+    A note on scaling of the phases (formula units):
+    A phase can often be written with any multiple of a formula unit. For example:
+    the phase solid crystalline enstatite MgSiO3 can also be written as Mg2Si2O6.
+    It is exactly the same. Furthermore, if you mix 0.5 mole of SiO2 with 0.5 mole
+    of MgO (in total "1 mole of constituting system component") and form enstatite,
+    you will only form 0.5 mole of MgSiO3, which would be 1 mole of the formula
+    unit Mg(1/2)Si(1/2)O(3/2). To be able to put all phases correctly into the
+    same phase diagam, we must choose the formula unit that corresponds to one
+    mole of constituting system component, in this case Mg(1/2)Si(1/2)O(3/2).
+    In the usual mineral databases, however, these minerals are listed with their
+    more natural formulae, such as MgSiO3. The 'dbase' table given as argument
+    to CrystalDatabase (see below) must therefore contain information about how
+    to scale from the listed mineral MgSiO3 to the required Mg(1/2)Si(1/2)O(3/2).
+    The column 'moles' should contain this multiplicity factor, which is 2 in the
+    example of MgSiO3 and 4 if the same mineral is listed as Mg2Si2O6 (of course
+    all assuming that the system components are SiO2 and MgO). The column 'mfDfG'
+    is then the scaled Gibbs free energy of formation, such that mfDfG=DfG/moles.
     """
-    def __init__(self,dbase,resetfunc=None):
+    def __init__(self,dbase,resetfunc=None,resetdbfunc=None,components=None,factors=None):
         """
-        Provide or read a database of fixed stoichiometry phases.
+        Provide or read a database of fixed composition phases.
 
         Arguments:
 
           dbase        Either a string containing the name of the .csv or fixed-width-format
                        file containing the database, or a Pandas DataFrame of the database.
+                       The database must have at least the columns:
+                         "Abbrev"     The abbreviated name of the solid
+                         "Formula"    The chemical formula, e.g. "Mg2SiO4"
+                         "x"          The location in the phase diagram: An array x[0:ncomp]
+                                      with ncomp the nr of components.
+                         "moles"      How many moles you get if you mix 1 mole of system
+                                      components according to x to get this phase.
+                                      Example: system components [SiO2,MgO], phase
+                                      Mg2SiO4, then moles=3.0 and x=[(1/3),(2/3)].
+                         "DfG"        The Delta_f G or Delta_a G Gibbs energy of formation
+                         "mfDfG"      As DfG, but scaled to "per mole of system component",
+                                      i.e. mfDfG = DfG/moles.
+                       Other columns can be added for the reset function (see resetfunc below).
+                       Typically the DfG and mfDfG are computed by the reset function for
+                       a given T and P.
+
+                       Note: If components (possibly with factors) is given as keyword
+                             (see below), then the 'x', 'moles' and 'mfDfG' columns are
+                             computed, so you don't have to provide them in the table.
 
         Optional:
 
           resetfunc    A function with arguments (T,P), i.e. temperature (in Kelvin) and
                        pressure (in bar) that recomputes the Gibbs energy (in the mfDfG
                        column)
+
+          resetdbfunc  A function with arguments (T,P), i.e. temperature (in Kelvin) and
+                       pressure (in bar) that returns a new version of the pandas
+                       database. If you do not provide this function, you should ensure
+                       that, when resetting to a different T and/or P, the dbase you have
+                       passed to this class remains the same instance (just with different
+                       values in the 'DfG' and 'mfDfG' columns). If your model creates,
+                       instead, a new dbase each time the resetfunc() is called, then
+                       you must also provide the resetdbfunc() function to allow PhaseHull
+                       to re-link the correct dbase.
+
+          components   List of chemical formulae of the system components. If given,
+                       then the 'x', 'moles' and 'mfDfG' columns of the database are
+                       automaticlly computed.
+        
+          factors      If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5). Note: Only used when components is given.
         """
+        self.components = components
+        self.factors    = factors
         if type(dbase) is str:
             if dbase[-4:]=='.csv':
                 dbase = pd.read_csv(dbase)
@@ -42,19 +104,51 @@ class CrystalDatabase(object):
                 raise ValueError(f'Do not know how to read {dbase}')
         elif type(dbase)!=pd.DataFrame:
             raise  ValueError(f'Error: dbase must be a pandas DataFrame')
+        if components is not None:
+            # If components is given, then immediately make selection
+            # and compute the 'x', 'mfDfG' and 'moles' columns
+            from . import extract_from_mineral_database_based_on_components
+            if factors is None:
+                factors = np.ones(len(components))
+            dbase = extract_from_mineral_database_based_on_components(dbase,components,factors=factors)
         self.dbase  = dbase
         self.reset  = resetfunc
+        self.resetdb= resetdbfunc
         # For convenience: A dictionary from abbreviation to integer index
         self.index  = {index: value for value, index in enumerate(self.dbase['Abbrev'])}
 
+    def call_reset(self,T,P):
+        if self.reset is not None:
+            self.T = T
+            self.P = P
+            self.reset(T,P)
+            if self.resetdb is not None:
+                dbase = self.resetdb(T,P)
+                if self.components is not None:
+                    from . import extract_from_mineral_database_based_on_components
+                    factors = self.factors
+                    if factors is None:
+                        factors = np.ones(len(self.components))
+                        dbase = extract_from_mineral_database_based_on_components(dbase,self.components,factors=factors)
+                self.dbase = dbase
+
 class Liquid(object):
     """
-    Class for the physical properties of a liquid, or more general for a
+    Class for 'Solutions': Typically a liquid, or more general a
     non-stoichiometric material (e.g., an alloy or a glas), which has a
     Gibbs energy for any value of fractional abundance vector x.
+
+    The name 'Liquid' was chosen instead of 'Solution' because (1) the
+    word 'solution' has too many other meanings, and can be confusing,
+    and (2) for the geophysical and astrophysical community the most
+    common uses would be for melts. But this class can equally well be
+    used for solid solutions. The only condition is that a Gibbs energy
+    can be defined on the entire domain of the system (all x positions).
+    For restricted solid solutions, such as 'joins' in the phase diagram,
+    please use the SolidSolution class instead.
     """
     def __init__(self,name,components,Gfunc,kwforGfunc=None,resetfunc=None,
-                 gammafunc=None):
+                 gammafunc=None,factors=None,Hfunc=None):
         """
         Arguments:
 
@@ -94,10 +188,28 @@ class Liquid(object):
 
           gammafunc    If set, this is a function gamma(x), the activity
                        coefficient, defined such that the activity a=gamma*x.
+
+          factors      If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
+          Hfunc        If set, this is the enthalpy function. Not necessary
+                       for phasehull, but useful for energy considerations.
+
+        IMPORTANT NOTE: In PhaseHull all liquids are mapped onto the same grid.
+                        For each grid point, PhaseHull will then check which of
+                        the liquids has the lowest Gibbs energy, and will take
+                        that liquid for that point. This is different from the
+                        SolidSolution class, where each instance has its own
+                        set of points (and therefore its own grid). 
         """
         self.name             = name
         self.components       = np.array(components)
+        self.factors          = factors
         self.Gfunc            = Gfunc
+        self.Hfunc            = Hfunc
         self.kwforGfunc       = kwforGfunc
         self.reset            = resetfunc
         self.gammafunc        = gammafunc
@@ -153,8 +265,149 @@ class Liquid(object):
         the output of your reset() function and store it in self.kwforGfunc. 
         """
         if self.reset is not None:
-            self.kwforGfunc = self.reset(T,P)
+            self.T = T
+            self.P = P
+            kwforGfunc = self.reset(T,P)
+            if kwforGfunc is not None:
+                self.kwforGfunc = kwforGfunc
 
+class SolidSolution(object):
+    """
+    The solid solution crystal families, often called 'joins'. Note: only recommended if 
+    this family has a lower dimension than the nr of components. Otherwise: better use 
+    an instance of the Liquid class and add to self.liquids, as that class has more features
+    such as grid refinement and more. The solid solution class is a rather primitive
+    class to add a grid of points independent of the liquid grid, and typically a
+    subspace of the full x-space. Example: We have CaO,MgO,SiO2 ternary space, but 
+    we want to add the Ca(1-y)Mg(y)MgSi2O6 binary solid solution (the Enstatite-
+    Diopside join) inside it.
+
+    This class has a method setup_base_grid() to create a simple regular grid on the
+    subspace of this solid solution. That does not mean, however, that only regular
+    grids are allowed. You can put your own grid onto this subspace, or add gridpoints
+    to the regular grid. This way you can make your own grid refinement. However, an
+    automatic grid refinement, as it is implemented in PhaseHull for the Liquid class
+    instances, is not offered for SolidSolution class instances.
+    """
+    def __init__(self,name,components,endmembers,Gfunc,mdb,endmfact=None,kwforGfunc=None,resetfunc=None,
+                 ygrid=None,nres=30,factors=None):
+        """
+        Arguments:
+
+          name          The name you want to give to this solid solution
+
+          components    Array of formulae of the components of the full system, in which
+                        you intend to embed this solid solution. E.g. ['CaO','MgO','SiO2']
+
+          endmembers    Array of formulae or names of the endmembers of the solid solution. 
+                        This array should have a length smaller or equal to the length of the
+                        components array. The formulae or names must be listed in the
+                        mineral database mdb (below). NOTE: It can be that the endmember
+                        you wish is only listed with another multiplication factor in the
+                        mdb database, e.g. MgSiO3 while your model for the solid solution
+                        uses e.g. Mg2Si2O6. If that is so, please give (for this example)
+                        the 'MgSiO3' in endmembers, and specify endmfact below, setting
+                        the corresponding value of endfact to 2. This signals the code
+                        that the endmember formula unit is 2x MgSiO3 = Mg2Si2O6.
+
+          Gfunc         The function that computes the Gibbs energy as a function of the
+                        y coordinate within the solid solution. Must be a function Gfunc(y).
+                        It should return the Gibbs energy per mole of endmember. In the
+                        example of components = ['CaO','MgO','SiO2'], endmembers =
+                        ['MgSiO3','CaMgSi2O6'] and endmfact = [2.,1.] (meaning that the
+                        actual endmembers are Mg2Si2O6 and CaMgSi2O6), the Gfunc should
+                        give the Gibbs energy per mole of y*Mg2Si2O6 + (1-y)*CaMgSi2O6,
+                        which is 4 times the Gibbs energy per mole of component CaO,
+                        MgO and SiO2. 
+
+        Optional:
+
+          endmfact      Array of multiplication factors for the endmembers given in the
+                        `endmembers` argument. If set to None, it is by default 1 for
+                        all endmembers. For the above example of a mdb database containing
+                        only MgSiO3, while your endmember formula unit is Mg2Si2O6, you
+                        should then set the endfact multiplication factor for that
+                        endmember to 2.0. So for a solid solution of endmembers
+                        Mg2Si2O6 and CaMgSi2O6, with a mineral database containing
+                        MgSiO3 and CaMgSi2O6, you should set endmfact = [2.,1.].
+
+          factors      If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
+          kwforGfunc   A dictionary of possible keyword arguments for the Gfunc,
+                       in case your function needs additional information to be
+                       passed on.
+
+          resetfunc    A function with arguments (T,P), i.e. temperature (in Kelvin) and
+                       pressure (in bar) that reconfigures the Gfunc to compute
+                       the Gibbs energy for the new T and P.
+
+          ygrid        Your specified y-grid in the solid solution space.
+
+          nres         If you do not specify ygrid, then nres is the number of grid points
+                       along each axis of the solid solution space. A linear (triangular)
+                       grid is then set up.
+        """
+        self.name       = name
+        self.components = components
+        self.factors    = factors
+        self.endmembers = endmembers
+        if endmfact is None:
+            self.endmfact = np.ones(len(self.endmembers))
+        else:
+            assert len(endmfact)==len(self.endmembers), 'Error in endfact: If you specify endfact, it must be an array of numbers with the same length as the endmember array.'
+            self.endmfact   = endmfact
+        self.mdb        = mdb
+        assert 'x' in self.mdb.columns, 'Error: the mineral database you provided does not have the x column yet.'
+        self.ncomp      = len(components)
+        self.nendm      = len(endmembers)
+        assert self.nendm<=self.ncomp, 'Error: Cannot have more endmembers of this solid solution than components.'
+        self.xendm      = np.zeros((self.nendm,self.ncomp))
+        self.mfendm     = np.ones(self.nendm)
+        self.mfGfact    = 1.0
+        self.Gfunc      = Gfunc
+        self.reset      = resetfunc
+        self.kwforGfunc = kwforGfunc
+        self.setup_base_grid(ygrid=ygrid,nres=nres)
+
+    def setup_base_grid(self,ygrid=None,nres=30):
+        if ygrid is None:
+            ygrid       = make_x_grid(nres,self.nendm)
+            # Maybe we need to remove the corner points? Or the pure crystals?
+        self.ygrid      = ygrid
+        for iend,name in enumerate(self.endmembers):
+            if name in list(self.mdb['Abbrev']):
+                self.xendm[iend,:] = self.mdb['x'][self.mdb['Abbrev']==name].iloc[0].copy()
+                self.mfendm[iend]  = self.mdb['moles'][self.mdb['Abbrev']==name].iloc[0]/self.endmfact[iend]
+            elif name in list(self.mdb['Formula']):
+                self.xendm[iend,:] = self.mdb['x'][self.mdb['Formula']==name].iloc[0].copy()
+                self.mfendm[iend]  = self.mdb['moles'][self.mdb['Formula']==name].iloc[0]/self.endmfact[iend]
+            else:
+                print(f'Error: Could not find endmember {name} in the mineral database you provided.')
+        # For now we insist that mfendm is the same value for all endmembers, to avoid having
+        # to make a non-linear transformation when computing G.
+        self.mfGfact    = self.mfendm[0]
+        for iend in range(1,len(self.mfendm)):
+            assert self.mfendm[iend]==self.mfGfact, 'Error: For now the SolidSolution class cannot (yet) handle cases where the endmembers have different mfendm factors (an mfendm factor is e.g. 0.25 for endmember Mg2Si2O6 in a component system of CaO,MgO,SiO2). Will hopefully some day be built in.'
+        self.xgrid      = (self.ygrid[:,:,None]*self.xendm[None,:,:]).sum(axis=1)
+
+    def call_Gfunc(self):
+        if self.kwforGfunc is not None:
+            G   = self.Gfunc(self.ygrid,**self.kwforGfunc)
+        else:
+            G   = self.Gfunc(self.ygrid)
+        return G * self.mfGfact
+
+    def call_reset(self,T,P):
+        if self.reset is not None:
+            self.T = T
+            self.P = P
+            kwforGfunc = self.reset(T,P)
+            if kwforGfunc is not None:
+                self.kwforGfunc = kwforGfunc
 
 class PhaseHull(object):
     """
@@ -162,9 +415,10 @@ class PhaseHull(object):
     basic classifications of the simplices. It does not contain any physical/chemical data. All that has
     to be provided as arguments to this class.
     """
-    def __init__(self,components,crystals=None,liquids=None,T=None,P=None,nres0=30,nrefine=4,nfact=2,nspan=2, \
+    def __init__(self,components,crystals=None,liquids=None,solsols=None,T=None,P=None,nres0=30,nrefine=4,nfact=2,nspan=2, \
                  min_nr_tielines=2,nocompute=False,incl_ptnames=True,incl_xvals=True,incl_Gvals=True,        \
-                 incl_Gcen=False,incl_xcen=False,incl_xtie=False,mrcrit=10.):
+                 incl_Gcen=False,incl_xcen=False,incl_xtie=False,mrcrit=10.,refinepoints=None,xgrid=None,
+                 factors=None,epsequ=1e-18):
         """
         Arguments:
 
@@ -178,6 +432,13 @@ class PhaseHull(object):
                        Notice that liquid simply means: non-stoichiometric solution. It does not have
                        to be truly liquid. For instance, alloys are also continuous mixed phases, so they
                        would also be a 'liquid' in this sense.
+
+          solsols      Some solid solutions may only exist in a lower-dimensional subspace of the full
+                       system. Example: Ca(1-x)Mg(x)SiO4 in the CaO-MgO-SiO2 system. This cannot be
+                       modelled using a Liquid class. For this the SolidSolution class is designed.
+                       However, please note that this class is less powerful (e.g. it does not
+                       participate in the automatic grid refinement). So if you can use the Liquid
+                       class for your solid solution, then that is advisable.
 
           nres0        If liquids are present, nres0 determines the base grid resolution: it is the
                        number of grid spacings between 0 and 1.
@@ -203,6 +464,33 @@ class PhaseHull(object):
           incl_xcen        Include the x center of the simplex
           incl_Gcen        Include the G center of the simplex
           incl_xtie        For those simplices that are tie lines, include the tie line x values
+
+        Other options:
+
+          xgrid        If you want to have full control of the base grid of the liquids (before
+                       refinement) you can set xgrid. It should be an array with indices [ipt,icomp]
+                       where ipt is the index of the point, and icomp goes from 0 to M-1, which is
+                       the index of the component. IMPORTANT NOTE: Make sure that nres0 is properly
+                       set to 1/dx, where dx is the smallest grid spacing in the xgrid. This is
+                       important for the grid refinement (if you set/keep nrefine>0).
+
+          factors      If list or array numbers of length len(components), then
+                       the components are, in fact, components*factors. Useful
+                       for when a component is, e.g., MnSi0.5O2 instead of
+                       Mn2SiO4 (the component would then be Mn2SiO4 with a
+                       factor of 0.5).
+
+          epsequ       The convex hull computation sometimes produces simplices that are
+                       exactly "vertical", meaning their normal vector has the G-component
+                       exactly 0. However, in numerics, this 'exact 0' sometimes has numerical
+                       errors, and so the simplex may have an equations[:,-2] of the order of
+                       -1e-22 or so. Since this is <0, it would be included as a simplex of
+                       the phase diagram. This is not a major problem, but it is not really
+                       desired. So as a default the threshold is equations[:,-2]<-epsequ, where
+                       the default value of epsequ is set to 1e-18, which is usually much
+                       smaller than any relevant values, and also substantially bigger than
+                       the typical double predition errors. If you set it to 0.0, then this
+                       slightly more selective threshold is not included.
 
         Calling PhaseHull will automatically start the computation of the phase diagram for the
         given temperature T and pressure P for which the crystals and liquid(s) are given. If a liquid
@@ -280,39 +568,80 @@ class PhaseHull(object):
           tested. Not sure if all simplex types are complete for higher order
           systems. This may need some additional work.
         """
+        self.epsequ       = epsequ
         self.mrcrit       = mrcrit
         self.components   = components
+        self.factors      = factors
         self.ncomponents  = len(components)
-        self.ncomp        = 0
-        self.nsol         = 0
+        #self.ncomp        = 0
+        self.ncryst       = 0
         self.nliq         = 0
-        self.tieline_types= ['tieline_c0l2','tieline_c0l3','tieline_c1l2','tieline_c1l3']
+        self.nsolsol      = 0
         if self.ncomponents>3:
             print('Note: At this moment the tie line identification has not been tested for nr of components>3.')
+
+        # Add the crystals to PhaseHull
         if crystals is not None:
-            self.nsol = len(crystals.dbase)
+            self.ncryst = len(crystals.dbase)
             if type(crystals) is not list:
                 # Note: The fact that also the crystals are a list is a relic. In hindsight not necessary
                 crystals  = [crystals]
+            # Do a self-check
+            for i,cr in enumerate(crystals):
+                if cr.components is not None:
+                    assert np.all(np.array(components)==np.array(cr.components)), 'Error: The components of the crystal database are unequal to those of phasehull'
+                    if cr.factors is not None and self.factors is not None:
+                        assert factors==cr.factors, 'Error: The factors of the components of the crystal database are unequal to those of phasehull'
         else:
             crystals      = []
         self.crystals     = crystals
+
+        # Add the liquid(s) to PhaseHull
         if liquids is not None:
             if type(liquids) is not list:
                 # Liquids must be a list of liquids, because you can have multiple ones
                 # (e.g. true liquid and a vapor phase, or true liquid and a solid solution).
                 liquids   = [liquids]
             self.nliq     = len(liquids)
+            self.liqnames = {}
+            for i,lq in enumerate(liquids):
+                self.liqnames[lq.name] = i
+            # Do a self-check
+            for i,lq in enumerate(liquids):
+                if lq.components is not None:
+                    assert np.all(np.array(components)==np.array(lq.components)), 'Error: The components of the liquid are unequal to those of phasehull'
+                    if lq.factors is not None and self.factors is not None:
+                        assert factors==lq.factors, 'Error: The factors of the components of the liquid are unequal to those of phasehull'
         else:
             liquids       = []
         self.liquids      = liquids
+
+        # Add the solid solutions to PhaseHull
+        if solsols is not None:
+            if type(solsols) is not list:
+                # Solsols must be a list of solsols, because you can have multiple ones.
+                solsols   = [solsols]
+            self.nsolsol  = len(solsols)
+            self.solsolnames = {}
+            for i,ss in enumerate(solsols):
+                self.solsolnames[ss.name] = i
+        else:
+            solsols       = []
+        self.solsols      = solsols
+
+        # Update the temperature and pressure, and update all the
+        # Gibbs free energies accordingly
         self.T            = T
         self.P            = P
         if T is not None or P is not None:
-            for c in self.crystals:
-                c.reset(T,P)
+            for c in self.crystals:  # First the crystals as the may be used by liquids and solsols
+                c.call_reset(T,P)
             for l in self.liquids:
                 l.call_reset(T,P)
+            for s in self.solsols:
+                s.call_reset(T,P)
+
+        # Set defaults
         self.nres0        = nres0
         self.nrefine      = nrefine
         self.nfact        = nfact
@@ -324,6 +653,16 @@ class PhaseHull(object):
         self.incl_Gcen    = incl_Gcen
         self.incl_xcen    = incl_xcen
         self.incl_xtie    = incl_xtie
+        self.refinepoints = refinepoints
+        self.tieline_types= ['tieline_c0l2','tieline_c0l3','tieline_c1l2','tieline_c1l3',\
+                             'tieline_c1l0s2','tieline_c0l0s3','tieline_c0l1s2','tieline_c0l2s1']
+                            # Not possible should be 'tieline_c1l1s1', 'tieline_c2l0s1',
+
+        # Wrap up
+        if xgrid is not None:
+            self.user_xgrid   = np.stack(xgrid)
+        else:
+            self.user_xgrid = None
         if not nocompute:
             self.compute()
 
@@ -343,10 +682,12 @@ class PhaseHull(object):
         """
         self.T = T
         self.P = P
-        for c in self.crystals:
-            c.reset(T,P)
+        for c in self.crystals:  # First the crystals as the may be used by liquids and solsols
+            c.call_reset(T,P)
         for l in self.liquids:
             l.call_reset(T,P)
+        for s in self.solsols:
+            s.call_reset(T,P)
         if not nocompute:
             self.compute()
 
@@ -355,10 +696,32 @@ class PhaseHull(object):
         This runs all the basic computations for the phase diagram.
         It is the core of PhaseHull.
         """
-        self.setup_base_grid()
+        self.setup_all_points_before_refinement()
         self.thehulls     = []
         self.thesimplices = []
         self.do_all_refinement_steps()
+        self.get_tie_lines_simplices()
+        if self.ncomponents==3:
+            self.get_tie_line_groups()
+        if len(self.crystals)>0:
+            self.find_stable_crystals()
+
+    def recompute_with_selected_phases(self,incl_liq=True,incl_solsol=False,incl_cryst=False):
+        """
+        It can be convenient to be able to compute the liquid G(x) surface at all (refined) grid
+        points as if the other phases (solsol and crystals) are not there. Or compute the
+        convex hull of all crystals, as if the liquid and solsol phases were not there. This is
+        purely for analysis purposes, not for final science results. This function will
+        allow you to do this. It works as if a new refinement layer is computed, but instead
+        of refining the grid, it will keep the grid the same, just switch off/on the liquid and/or
+        solsol and/or crystal phases.
+
+        Arguments:
+          incl_liq      If True, then plot the liquid
+          incl_solsol   If True, then plot the solsols
+          incl_cryst    If True, then plot the crystals
+        """
+        self.redo_computation_with_selected_phases(incl_liq=incl_liq,incl_solsol=incl_solsol,incl_cryst=incl_cryst)
         self.get_tie_lines_simplices()
         if self.ncomponents==3:
             self.get_tie_line_groups()
@@ -446,7 +809,7 @@ class PhaseHull(object):
     def select_simplices_of_a_given_kind(self,stype):
         """
         The product of PhaseHull is a set of simplices (in a binary model = line elements,
-        in a ternary model = triangles, in a quaternary model = tetrad) describing the
+        in a ternary model = triangles, in a quaternary model = tetrads) describing the
         bottom of the convex hull. PhaseHull will try to classify the physical meaning of
         each of these simplices. For instance, a tiny simplex is likely part of a continuous
         liquid; if the analytic G(x) lies below that simplex, then this simplex is clearly
@@ -469,9 +832,9 @@ class PhaseHull(object):
                              1 liquid point (only for ternary diagrams).
                              This is a very elongated simplex. Its
                              meaning is that of a binary phase line 
-                             in a ternary diagram. The two fluid points
-                             are actually a single fluid, but it becomes 
-                             two very-nearby fluid points due to the
+                             in a ternary diagram. The two liquid points
+                             are actually a single liquid, but it becomes 
+                             two very-nearby liquid points due to the
                              discretization.
            tieline_c0l3      A coexistence of two liquid phases that
                              are inmiscible  (only for ternary diagrams).
@@ -552,7 +915,10 @@ class PhaseHull(object):
         for i,row in cdb.iterrows():
             w               = np.where(ids==row['Abbrev'])[0]
             if len(w)==1:
-                cdb.at[i,'ipt'] = w[0]
+                if self.check_mineral_within_TP_range(row):
+                    cdb.at[i,'ipt'] = w[0]
+                else:
+                    cdb.at[i,'ipt'] = -3   # Signalling: Temperature or pressure out of range of this mineral
             elif len(w)==0:
                 cdb.at[i,'ipt'] = -1   # Signalling: This mineral is not in the point cloud
             else:
@@ -891,7 +1257,7 @@ class PhaseHull(object):
                 tpts = tuple(cpts)
                 walls.append(tpts)
                 if simplices['stype'][ineigh]!='liquid':
-                    # Neighbor with a non-fluid simplex == liquidus wall
+                    # Neighbor with a non-liquid simplex == liquidus wall
                     liquidus_walls.append(tpts)
             if len(simplices['neighbors'][isim])<self.ncomponents:
                 # Some walls are at the edge of the domain
@@ -954,13 +1320,13 @@ class PhaseHull(object):
             assert x is None and G is None, 'Error: Cannot set both components and x,G'
             ncomp = len(components)
             x = np.zeros(ncomp)
-            G = np.zeros(ncomp)
+            Gzero = np.zeros(ncomp)
             if useliq:
                 liq = self.liquids[-1]
                 for i in range(ncomp):
                     x[:] = 0
                     x[i] = 1.
-                    G[i] = liq.call_Gfunc(components,x[i,:])
+                    Gzero[i] = liq.call_Gfunc(components,x[:])
             else:
                 cryst = self.crystals[-1]
                 db    = cryst.dbase
@@ -1013,7 +1379,7 @@ class PhaseHull(object):
 
     # ------ Inner working stuff for PhaseHull -----
 
-    def call_Gfunctions(self,components,x):
+    def call_Gfunctions_liquids(self,components,x,return_Gliq=False):
         """
         PhaseHull can handle multiple continua, for instance liquid and solid metal alloy. When these functions
         are called, the lowest of the continua is taken at any point x. Also the id-number of this continuum
@@ -1041,10 +1407,20 @@ class PhaseHull(object):
         # Loop over all liquids (usually just one, and note that 'liquid' here means
         # a continuum, and can therefore also be a non-fixed composition solid, such
         # as an alloy).
-        
-        for iliq in range(len(self.liquids)):
-            G.append(self.liquids[iliq].call_Gfunc(components,x))  # Call the function that computes G
-            idl.append(-iliq-1)                                    # Store the ID of this liquid
+
+        x    = np.stack(x)
+        if len(x.shape)==2:
+            nx   = x.shape[0]
+        else:
+            nx   = 1
+        nliq = len(self.liquids)
+        for iliq in range(nliq):
+            gib = self.liquids[iliq].call_Gfunc(components,x)      # Call the function that computes G
+            gib = np.reshape(gib,[nx])
+            G.append(gib)
+            idd = np.reshape(-iliq-1,[nx])
+            idl.append(idd)                                        # Store the ID of this liquid
+        if return_Gliq: Gliq = G
         G    = np.stack(G).T
         imin = G.argmin(axis=-1)                 # Determine which of the liquids has the lowest G
         Gmin = np.zeros(len(G))                  # Since x can be an array of points
@@ -1053,23 +1429,29 @@ class PhaseHull(object):
             im      = imin[i]
             Gmin[i] = G[i,im]
             idlm[i] = idl[im]
-        return Gmin,idlm
+        if len(x.shape)==1:
+            Gmin = Gmin[0]
+            idlm = idlm[0]
+        if return_Gliq:
+            return Gmin,idlm,Gliq
+        else:
+            return Gmin,idlm
 
-    def create_points_for_liquids(self,xgrid,Ggrid):
+    def create_points_for_liquids_or_solid_solutions(self,xgrid,Ggrid,idgrid):
         """
         From a set of points xgrid with a G value at each point Ggrid,
         construct the points we shall use for the convex hull algorithm. This is
-        used for setting up a grid of points to map continua (i.e., liquids,
-        which include also alloys or glasses). These have no fixed
-        stoichiometry, hence they have a Gibbs energy at all (or a continuous
-        subspace) of the x phase space.
+        used for setting up a grid of points to map continuous solutions (i.e., 
+        liquids or solid solutions). These have no fixed stoichiometry, hence
+        they have a Gibbs energy at all (or a continuous subspace) of the
+        x phase space.
         """
         pts = np.zeros((len(Ggrid),self.ncomponents))
-        ids = np.zeros((len(Ggrid)),dtype=int)
+        ids = [None for _ in range(len(Ggrid))]
         for i in range(len(Ggrid)):
             pts[i,:-1] = xgrid[i][:-1].copy()    # For the convex hull we only need the independent x values, hence [:-1]
-            pts[i,-1]  = Ggrid[i][0]             # The last value of the point coordinates is the G value
-            ids[i]     = Ggrid[i][1]             # The ids tell which liquid this point belongs to, if multiple continua are used.
+            pts[i,-1]  = Ggrid[i]                # The last value of the point coordinates is the G value
+            ids[i]     = idgrid[i]               # The ids tell which liquid this point belongs to, if multiple continua are used.
         pts = np.stack(pts)
         return pts,ids
 
@@ -1100,6 +1482,15 @@ class PhaseHull(object):
             assert len(self.crystals)==1, 'Error: At the moment, only one crystal database is allowed.'
             mdb       = self.crystals[0].dbase
 
+            assert(len(mdb)>0), 'Error: Crystal db empty'
+
+            # Remove all minerals that are either out of their temperature or pressure range
+            # or have clearly unphysical value of DfG (a way to signal PhaseHull not to include
+            # this mineral).
+
+            mdb       = self.remove_out_of_TP_range_minerals_from_db(mdb)
+            mdb       = self.remove_invalid_G_minerals_from_db(mdb)
+
             # At the component locations only 1 crystal is allowed, so pick the lowest energy one
 
             mdb       = self.remove_non_lowest_components_from_db(mdb)
@@ -1114,6 +1505,49 @@ class PhaseHull(object):
                 name    = row['Abbrev']   # Add the label of which crystal this is to this point, for later reference.
                 ids.append(name)
         return pts,ids
+
+    def remove_out_of_TP_range_minerals_from_db(self,mdb):
+        """
+        Some rows of the database may have a restricted validity range in
+        temperature and/or pressure. These are given by the 'Tmin', 'Tmax',
+        'Pmin' and 'Pmax' (in Kelvin resp bar) columns of the database.
+
+        NOTE: This is done only for the fixed-composition crystals, not for
+              the endmembers of liquid or solid solutions, because the
+              Gibbs functions for those have to be provided as Python
+              functions by the input model. So the input model has to
+              take care of these ranges.
+        """
+        mdb   = mdb.reset_index(drop=True)
+        T     = self.T
+        P     = self.P
+        if 'Tmin' in mdb.columns and T is not None: mdb = mdb[T>=mdb['Tmin']]
+        if 'Tmax' in mdb.columns and T is not None: mdb = mdb[T< mdb['Tmax']]
+        if 'Pmin' in mdb.columns and P is not None: mdb = mdb[P>=mdb['Pmin']]
+        if 'Pmax' in mdb.columns and P is not None: mdb = mdb[P< mdb['Pmax']]
+        return mdb
+
+    def check_mineral_within_TP_range(self,dbrow):
+        T     = self.T
+        P     = self.P
+        check = True
+        if 'Tmin' in dbrow and T is not None:
+            if T< dbrow['Tmin']: check = False
+        if 'Tmax' in dbrow and T is not None:
+            if T>=dbrow['Tmax']: check = False
+        if 'Pmin' in dbrow and P is not None:
+            if P< dbrow['Pmin']: check = False
+        if 'Pmax' in dbrow and P is not None:
+            if P>=dbrow['Pmax']: check = False
+        return check
+
+    def remove_invalid_G_minerals_from_db(self,mdb):
+        """
+        One way to signal to PhaseHull that a mineral is somehow invalid and should
+        not be included is to put its value of 'DfG' to a value >=1e40.
+        """
+        mdb = mdb[mdb['DfG']<1e40]
+        return mdb
 
     def remove_non_lowest_components_from_db(self,mdb):
         """
@@ -1132,15 +1566,16 @@ class PhaseHull(object):
                 if m['x'][k]==1:
                     ii.append(i)
                     GG.append(m['mfDfG'])
-            assert len(ii)>0, f'No Component found in direction {k}'
-            ikeep = ii[np.argmin(GG)]
-            for i in ii:
-                if i!=ikeep:
-                    iincl.remove(i)
+            #assert len(ii)>0, f'No Component found in direction {k}'
+            if len(ii)>0:
+                ikeep = ii[np.argmin(GG)]
+                for i in ii:
+                    if i!=ikeep:
+                        iincl.remove(i)
         mdb = mdb.iloc[iincl].reset_index(drop=True)
         return mdb
 
-    def setup_base_grid(self):
+    def setup_all_points_before_refinement(self):
         """
         For liquids or non-fixed-composition solids (alloys, glasses) we need a grid
         of x values. This grid can be refined if necessary, but first we set up a
@@ -1158,6 +1593,14 @@ class PhaseHull(object):
         The highest resolution grid is always the last. So the set of points of
         the base grid are self.thepoints[0], while the set of points of the
         most-refined grid are self.thepoints[-1] (where -1 stands for last).
+
+        NOTE: Certain solid solutions cannot be modelled with the Liquid class, because
+              they have a restricted subspace within the full system. Example: the
+              Ca(1-x)Mg(x)SiO4 crystal binary family in the CaO-MgO-SiO2 ternary system.
+              These have to be modelled using another class: The SolidSolution class.
+              HOWEVER: If you can model your solid solution with the Liquid class, it is
+              better. The solid solution must then exist for all x points in the
+              system. 
         """
 
         # For each level of refinement, all data is stored in self.the<something>.
@@ -1166,8 +1609,12 @@ class PhaseHull(object):
         self.theids          = []  # The identifications of the points used for the convex hull
         self.thepoints_liq   = []  # Only for convenience
         self.theids_liq      = []  # Only for convenience
+        self.thepoints_solsol= []  # Only for convenience
+        self.theids_solsol   = []  # Only for convenience
         self.thepoints_cryst = []  # Only for convenience
         self.theids_cryst    = []  # Only for convenience
+        if(len(self.solsols)>0):
+            self.theyvals    = []
 
         # The liquids
         pts_liq = None
@@ -1175,18 +1622,65 @@ class PhaseHull(object):
         if(len(self.liquids)>0):
             nres              = self.nres0
             self.gridsnres    = [nres]
-            igrid             = self.make_integer_grid(nres)  # Call the actual grid builder
             self.igrids       = []
-            self.igrids.append(igrid)
             self.xgrids       = []
-            xgrid             = igrid/nres
-            self.xgrids.append(xgrid)
+            if self.user_xgrid is None:
+                # Normal case: We make the base grid for the liquids (the solutions) here
+                igrid             = make_integer_grid(nres,self.ncomponents)  # Call the actual grid builder
+                self.igrids.append(igrid)
+                xgrid             = igrid/nres
+                self.xgrids.append(xgrid)
+            else:
+                # Special case: The user has his/her own base grid for the liquids (the solutions)
+                xgrid         = self.user_xgrid
+                igrid         = xgrid*nres
+                # Check if this igrid is indeed integer
+                ipgrid        = (igrid+1e-6).astype(int)
+                imgrid        = (igrid+1-1e-6).astype(int)
+                assert np.all(ipgrid==imgrid), f'ERROR: The user-specified xgrid is not based on an integer grid with nres = {nres}.'
+                self.igrids.append(igrid)
+                self.xgrids.append(xgrid)
             Ggrid             = []
-            for x in xgrid:
-                Ggrid.append(self.call_Gfunctions(self.components,x))
-            pts_liq,ids_liq = self.create_points_for_liquids(xgrid,Ggrid)
+            idgrid            = []
+            for i,liq in enumerate(self.liquids):
+                liq.xgrid     = xgrid
+                liq.Ggrid     = np.zeros(len(xgrid))
+            for ix,x in enumerate(xgrid):
+                G,idd,Gl       = self.call_Gfunctions_liquids(self.components,x,return_Gliq=True)
+                Ggrid.append(G)
+                idgrid.append(idd)
+                for i,liq in enumerate(self.liquids):
+                    liq.Ggrid[ix] = Gl[i]
+            pts_liq,ids_liq = self.create_points_for_liquids_or_solid_solutions(xgrid,Ggrid,idgrid)
             self.thepoints_liq.append(pts_liq)
             self.theids_liq.append(ids_liq)
+
+        # The solid solution crystal families. Note: only recommended if this family has
+        # a lower dimension than the nr of components. Otherwise: better use an instance
+        # of the Liquid class and add to self.liquids, as that class has more features
+        # such as grid refinement and more. The solid solution class is a rather primitive
+        # class to add a grid of points independent of the liquid grid, and typically a
+        # subspace of the full x-space. Example: We have CaO,MgO,SiO2 ternary space, but 
+        # we want to add the Ca(1-y)Mg(y)MgSi2O6 binary solid solution (the Enstatite-
+        # Diopside join) inside it.
+        pts_solsol = None
+        ids_solsol = None
+        yvs_solsol = None
+        if(len(self.solsols)>0):
+            pts_solsol = []
+            ids_solsol = []
+            yvs_solsol = []
+            for solsol in self.solsols:
+                assert hasattr(solsol,'ygrid') and hasattr(solsol,'xgrid'), f'Error: The internal grid for the solid solution {solsol.name} has not yet been set up properly.'
+                Ggrid  = solsol.call_Gfunc()
+                solsol.Ggrid = Ggrid
+                idgrid = [f'+{solsol.name}' for i in range(len(solsol.ygrid))]
+                pts_ss,ids_ss = self.create_points_for_liquids_or_solid_solutions(solsol.xgrid,Ggrid,idgrid)
+                pts_solsol += list(pts_ss)
+                ids_solsol += list(ids_ss)
+                yvs_solsol += list(solsol.ygrid)
+            self.thepoints_solsol.append(pts_solsol)
+            self.theids_solsol.append(ids_solsol)
 
         # The fixed stoichiometry crystals
         pts_cryst = None
@@ -1199,58 +1693,24 @@ class PhaseHull(object):
         # Combine the points
         pts = []
         ids = []
+        if(len(self.solsols)>0): yvs = []
         if pts_liq is not None:
             pts += list(pts_liq)
             ids += list(ids_liq)
+            if(len(self.solsols)>0): yvs += [None for _ in range(len(pts_liq))]
+        if pts_solsol is not None:
+            pts += list(pts_solsol)
+            ids += list(ids_solsol)
+            yvs += list(yvs_solsol)
         if pts_cryst is not None:
             pts += list(pts_cryst)
             ids += list(ids_cryst)
+            if(len(self.solsols)>0): yvs += [None for _ in range(len(pts_cryst))]
         pts = np.stack(pts)
         self.thepoints.append(pts)
         self.theids.append(ids)
-
-    def make_integer_grid(self,nres):
-        """
-        The function that constructs the base grid in integer form. Note
-        that for 3 enmembers the grid is triangular, for 4 components
-        the grid is a tetrad, etc. The integer grid is constructed in
-        a way that the full allowed space is uniformly mapped with
-        nres points along each axis. 
-        """
-        ixgrid = set()
-        if self.ncomponents==2:
-            for ix0 in range(0,nres+1):
-                if ix0>=0 and ix0<=nres:
-                    k = nres - ix0
-                    ixgrid.add((ix0,k))
-        elif self.ncomponents==3:
-            for ix0 in range(0,nres+1):
-                for ix1 in range(0,nres+1):
-                    if ix0>=0 and ix1>=0 and ix0+ix1<=nres:
-                        k = nres - ix0 - ix1
-                        ixgrid.add((ix0,ix1,k))
-        elif self.ncomponents==4:
-            for ix0 in range(0,nres+1):
-                for ix1 in range(0,nres+1):
-                    for ix2 in range(0,nres+1):
-                        if ix0>=0 and ix1>=0 and ix2>=0 and ix0+ix1+ix2<=nres:
-                            k = nres - ix0 - ix1 - ix2
-                            ixgrid.add((ix0,ix1,ix2,k))
-        else:
-            raise ValueError(f'Unfortunately at the moment we cannot handle nr of components = {self.ncomponents}')
-        ixgrid = list(ixgrid)
-        ixgrid.sort()
-        ixgrid = np.array(ixgrid)
-        return ixgrid
-
-    def make_x_grid(self,nres):
-        """
-        Wrapper around make_integer_grid(), where the integer values are rescaled back
-        to values between 0 and 1.
-        """
-        ixgrid = self.make_integer_grid(nres)
-        x      = ixgrid / nres
-        return x
+        if(len(self.solsols)>0):
+            self.theyvals.append(yvs)
 
     def do_convex_hull_algorithm(self,igrid):
         """
@@ -1291,7 +1751,7 @@ class PhaseHull(object):
         simplices = self.classify_simplices(pts,idlist,hull)
         self.thesimplices.append(simplices)
 
-    def do_one_refinement_step(self):
+    def do_one_refinement_step(self,refinepoints=None):
         """
         To correctly reproduce delicate details of the phase diagram it is
         usually important to have very high grid resolution close to certain
@@ -1302,24 +1762,51 @@ class PhaseHull(object):
         This function takes the results of the previous refinement step,
         figures out where further refinement can be beneficial, adds gridpoints
         there, and then redoes the convex hull computation.
+
+        Arguments:
+
+          refinepoints    If None, then refine near the binodals and liquidi.
+                          If a dict, then instead refine around those points
+                          defined by refinepoints['x'], which should be a 2D
+                          array of x[npoints,ncomp], which are the points
+                          around which to refine, ['nfact'] is the factor of 
+                          refinement, ['nspan'] is the span of the refinement,
+                          ['niter'] is the nr of recursive refinements.
         """
         assert len(self.liquids)>0, 'Error: No refinement necessary if no liquids/alloys/glasses available'
         assert len(self.thepoints)==len(self.thesimplices), f'First call do_convex_hull_algorithm({len(self.thepoints)-1})'
         igrid     = len(self.gridsnres)
         nres      = self.gridsnres[-1]
-        nresnew   = nres*self.nfact
-        print(f'Iteration {igrid} at dx = 1/{nresnew}')
-        self.gridsnres.append(nresnew)
 
         # The liquids
         pts_liq   = self.thepoints_liq[igrid-1]
         ids_liq   = self.theids_liq[igrid-1]
         simplices = self.thesimplices[igrid-1]
-        ptsnew_liq,idsnew_liq = self.refine_near_binodals_2d(pts_liq,simplices,nres+1,nfact=self.nfact,nspan=self.nspan)
+        if refinepoints is None:
+            nresnew   = nres*self.nfact
+            print(f'Iteration {igrid} at dx = 1/{nresnew}')
+            self.gridsnres.append(nresnew)
+            ptsnew_liq,idsnew_liq = self.refine_near_binodals_2d(pts_liq,simplices,nres+1,nfact=self.nfact,nspan=self.nspan)
+        else:
+            nresnew   = nres*refinepoints['nfact']**refinepoints['niter']
+            print(f'Refining grid at dx = 1/{nresnew}')
+            self.gridsnres.append(nresnew)
+            ptsnew_liq,idsnew_liq = self.refine_near_a_point_2d(pts_liq,simplices,nres+1,refinepoints['x'],
+                                                                nfact=refinepoints['nfact'],
+                                                                nspan=refinepoints['nspan'],
+                                                                niter=refinepoints['niter'])
         self.thepoints_liq.append(ptsnew_liq)
         self.theids_liq.append(idsnew_liq)
 
-        # The fixed stoichiometry crystals
+        # The solid solutions (just copy)
+        ptsnew_solsol = None
+        if(len(self.solsols)>0):
+            ptsnew_solsol = self.thepoints_solsol[igrid-1]
+            idsnew_solsol = self.theids_solsol[igrid-1]
+            self.thepoints_solsol.append(ptsnew_solsol)
+            self.theids_solsol.append(idsnew_solsol)
+        
+        # The fixed stoichiometry crystals (just copy)
         ptsnew_cryst = None
         if(len(self.crystals)>0):
             ptsnew_cryst = self.thepoints_cryst[igrid-1]
@@ -1333,6 +1820,9 @@ class PhaseHull(object):
         if ptsnew_liq is not None:
             pts += list(ptsnew_liq)
             ids += list(idsnew_liq)
+        if ptsnew_solsol is not None:
+            pts += list(ptsnew_solsol)
+            ids += list(idsnew_solsol)
         if ptsnew_cryst is not None:
             pts += list(ptsnew_cryst)
             ids += list(idsnew_cryst)
@@ -1346,9 +1836,61 @@ class PhaseHull(object):
     def do_all_refinement_steps(self):
         #print(f'First low resolution calculation at dx = 1/{self.nres0}')
         self.do_convex_hull_algorithm(0)
+        if self.refinepoints is not None:
+            self.do_one_refinement_step(refinepoints=self.refinepoints)
         if (len(self.liquids)>0) and len(self.components)>2:
             for iter in range(self.nrefine):
                 self.do_one_refinement_step()
+
+    def redo_computation_with_selected_phases(self,incl_liq=True,incl_solsol=False,incl_cryst=False):
+        assert len(self.thepoints)==len(self.thesimplices), f'First call do_convex_hull_algorithm({len(self.thepoints)-1})'
+        igrid     = len(self.gridsnres)
+        nres      = self.gridsnres[-1]
+
+        # The liquids
+        ptsnew_liq   = None
+        if(incl_liq):
+            ptsnew_liq   = self.thepoints_liq[igrid-1]
+            idsnew_liq   = self.theids_liq[igrid-1]
+            self.thepoints_liq.append(ptsnew_liq)
+            self.theids_liq.append(idsnew_liq)
+
+        # The solid solutions (just copy)
+        ptsnew_solsol = None
+        if(incl_solsol):
+            if(len(self.solsols)>0):
+                ptsnew_solsol = self.thepoints_solsol[igrid-1]
+                idsnew_solsol = self.theids_solsol[igrid-1]
+                self.thepoints_solsol.append(ptsnew_solsol)
+                self.theids_solsol.append(idsnew_solsol)
+        
+        # The fixed stoichiometry crystals (just copy)
+        ptsnew_cryst = None
+        if(incl_cryst):
+            if(len(self.crystals)>0):
+                ptsnew_cryst = self.thepoints_cryst[igrid-1]
+                idsnew_cryst = self.theids_cryst[igrid-1]
+                self.thepoints_cryst.append(np.stack(ptsnew_cryst))
+                self.theids_cryst.append(idsnew_cryst)
+
+        # Combine the points
+        pts = []
+        ids = []
+        if ptsnew_liq is not None:
+            pts += list(ptsnew_liq)
+            ids += list(idsnew_liq)
+        if ptsnew_solsol is not None:
+            pts += list(ptsnew_solsol)
+            ids += list(idsnew_solsol)
+        if ptsnew_cryst is not None:
+            pts += list(ptsnew_cryst)
+            ids += list(idsnew_cryst)
+        pts = np.stack(pts)
+        self.thepoints.append(pts)
+        self.theids.append(ids)
+
+        # Call the convex hull algorithm
+        self.do_convex_hull_algorithm(igrid)
 
     def find_lower_convex_hull_of_x_G_points(self,pts):
         """
@@ -1388,7 +1930,7 @@ class PhaseHull(object):
         """
         points    = np.stack(pts)
         hull      = ConvexHull(points)
-        include   = hull.equations[:,-2]<0
+        include   = hull.equations[:,-2]<-self.epsequ
         simplices = hull.simplices[include,:]
         equations = hull.equations[include,:]
         vertices  = hull.vertices
@@ -1423,9 +1965,9 @@ class PhaseHull(object):
                              1 liquid point (only for ternary diagrams).
                              This is a very elongated simplex. Its
                              meaning is that of a binary phase line 
-                             in a ternary diagram. The two fluid points
-                             are actually a single fluid, but it becomes 
-                             two very-nearby fluid points due to the
+                             in a ternary diagram. The two liquid points
+                             are actually a single liquid, but it becomes 
+                             two very-nearby liquid points due to the
                              discretization.
            tieline_c0l3      A coexistence of two liquid phases that
                              are inmiscible  (only for ternary diagrams).
@@ -1496,12 +2038,13 @@ class PhaseHull(object):
             # vector point downward (bottom of the convex
             # hull)
 
-            if(hull.equations[isim,-2]<0):
+            if(hull.equations[isim,-2]<-self.epsequ):
                 names    = []
                 x        = []
                 G        = []
                 allcryst = True
-                allcont  = True
+                allliq   = True
+                allsol   = True
 
                 # Loop over all corner points of this simplex
                 # and store their x coordinates and G values,
@@ -1518,11 +2061,23 @@ class PhaseHull(object):
                     x.append(pts[ipt,:-1])
                     G.append(pts[ipt,-1])
                     #if type(name) is int: allcryst = False
-                    if type(name) is str:
-                        allcont  = False
-                    else:
+                    #if type(name) is str:
+                    #    allcont  = False
+                    #else:
+                    #    allcryst = False
+                    sname = str(name).strip()
+                    if sname[0]=='-' or sname[0]=='+':
                         allcryst = False
-                assert not (allcryst and allcont), 'Error: Inconsistency in crystal/continuum.'
+                        if sname[0]=='+':
+                            allliq   = False
+                        if sname[0]=='-':
+                            allsol   = False
+                    else:
+                        allliq   = False
+                        allsol   = False
+                assert not (allcryst and allliq), 'Error: Inconsistency in crystal/liquid.'
+                assert not (allcryst and allsol), 'Error: Inconsistency in crystal/solidsolution.'
+                assert not (allliq and allsol), 'Error: Inconsistency in liquid/solidsolution.'
 
                 # Since the x values of these points are only
                 # the independent x values (one fewer than the
@@ -1551,12 +2106,12 @@ class PhaseHull(object):
                     # All corners of this simplex are crystal solids
                     # A tie simplex
                     simplices['stype'].append('allcryst')
-                elif allcont:
+                elif allliq:
                     # All corners of this simplex are liquid/alloy
                     if nx is not None:
-                        inmisc,x,l,mr = self._test_if_simplex_is_inmiscible_fluids(pts,isimnew,simplices['ipts'],nx=nx,return_all=True)
+                        inmisc,x,l,mr = self._test_if_simplex_is_inmiscible_liquids(pts,isimnew,simplices['ipts'],nx=nx,return_all=True)
                     else:
-                        inmisc        = self._test_if_simplex_is_inmiscible_fluids(pts,isimnew,simplices['ipts'],nx=nx,return_all=False)
+                        inmisc        = self._test_if_simplex_is_inmiscible_liquids(pts,isimnew,simplices['ipts'],nx=nx,return_all=False)
                         mr            = None
                     if(inmisc):                                  # If we are in an inmiscibility part of the liquid, 
                         nliq  = self.ncomponents                 # then do some more work.
@@ -1570,22 +2125,62 @@ class PhaseHull(object):
                     else:
                         stype = 'liquid'                         # If not inmiscible, then this is a normal liquid part
                     simplices['stype'].append(stype)
+                elif allsol:
+                    # All corners of this simplex are a solid solution
+                    # NOTE: We do not check for inmiscibility here. This would be more
+                    #       complicated on the lower-dimensional subspaces spanned by
+                    #       the SolidSolution class. For now, it is not worth the
+                    #       trouble. If you want to study the solid solution in more
+                    #       detail, then reduce the dimensionality of the problem to
+                    #       only this subspace, and then replace the SolidSolution
+                    #       object with a Liquid object, which has much more flexibility
+                    #       and functionality.
+                    if len(set(names))>1:
+                        stype = 'solsol_coexist'
+                    else:
+                        stype = 'solsol'
+                        inmis = self._test_if_simplex_is_inmiscible_solid_solutions(pts,isimnew,simplices['ipts'],names)
+                        inmis = inmis[names[0][1:]]   # We expect only a single inmiscibility, because we have only 1 solution now
+                        if inmis:
+                            stype = 'solsol_inmisc'
+                    simplices['stype'].append(stype)
                 else:
-                    # Some corners are liquid, some are crystal solids
-                    nliq   = 0
-                    ncryst = 0
+                    # Some corners may be liquid, some may be crystal solids, some may be solid solutions
+                    nliq      = 0   # Nr of liquid points
+                    ncryst    = 0   # Nr of fixed-composition crystal points
+                    nsolsol   = 0   # Nr of solid solution points
+                    crystals  = []
+                    liquids   = []
+                    solsols   = []
                     for i in range(len(simplex)):
                         if type(names[i]) is str:
-                            ncryst += 1
+                            if names[i][0]=='+':
+                                nsolsol   += 1   # Solid solution names start with a +
+                                solsols.append(names[i][1:])
+                            else:
+                                assert names[i][0]!='-', 'Liquid point should be negative integer, not string with a - sign.'
+                                ncryst += 1   # Fixed-composition names are all strings not starting with a +
+                                crystals.append(names[i])
                         else:
-                            nliq   += 1
+                            nliq   += 1       # Liquid solution names are negative integers
+                            liquids.append(names[i])
                     if self.ncomponents>2:
-                        if self._test_if_simplex_is_tie_line(pts,isimnew,simplices['ipts']):
-                            simplices['stype'].append(f'tieline_c{ncryst}l{nliq}')
+                        # Ternary or higher-dimensional
+                        if self._test_if_simplex_is_tie_line(pts,isimnew,simplices['ipts'],crystals,liquids,solsols):
+                            s = f'tieline_c{ncryst}l{nliq}'
+                            if nsolsol>0:
+                                s += f's{nsolsol}'
                         else:
-                            simplices['stype'].append(f'cryst_{ncryst}_liq_{nliq}')
+                            s = f'cryst_{ncryst}_liq_{nliq}'
+                            if nsolsol>0:
+                                s += f'_sol_{nsolsol}'
+                        simplices['stype'].append(s)
                     else:
-                        simplices['stype'].append(f'tieline_c{ncryst}l{nliq}')
+                        # Binary
+                        s = f'tieline_c{ncryst}l{nliq}'
+                        if nsolsol>0:
+                            s += f's{nsolsol}'
+                        simplices['stype'].append(s)
                 simplices['neighbors_qhull'].append(hull.neighbors[isim].copy())
                 simindices[isim] = isimnew
                 isimnew += 1
@@ -1614,7 +2209,7 @@ class PhaseHull(object):
         if self.incl_Gcen:     simplices['Gcen']    = np.array(simplices['Gcen'])
         return simplices
 
-    def _test_if_simplex_is_inmiscible_fluids(self,pts,isimnew,sim_ipts,nx=None,return_all=False):
+    def _test_if_simplex_is_inmiscible_liquids(self,pts,isim,sim_ipts,nx=None,return_all=False):
         # Inmiscible liquids occur when the G-surface is not convex,
         # but instead has a "wiggle". If the present simplex lies (apart
         # from its corner points) below the true liquid G function, then
@@ -1624,14 +2219,14 @@ class PhaseHull(object):
         npt = len(pts)                                             # Nr of points available (not all are part of the convex hull)
         x   = np.zeros((N+1,N))                                    # Molar fractions of the corner points of this simplex
         for i in range(N):
-            x[i,:-1] = pts[sim_ipts[isimnew][i]][:-1]
+            x[i,:-1] = pts[sim_ipts[isim][i]][:-1]
             x[i,-1]  = 1-x[i,:-1].sum(axis=-1)
         x[-1,:] = x[0,:]                                           # Copy the first x to the extra x, useful for the algorithm
         xcen = x[:-1,:].mean(axis=0)                               # The center of this simplex
-        Gcont,idcont = self.call_Gfunctions(self.components,xcen)  # Compute the real G at this center
+        Gcont,idcont = self.call_Gfunctions_liquids(self.components,xcen)  # Compute the real G at this center
         Gcen = 0.                                                  # Now compute the mean of the G values at the corners of the simplex
         for i in range(N):
-            Gcen += pts[sim_ipts[isimnew][i]][-1]
+            Gcen += pts[sim_ipts[isim][i]][-1]
         Gcen /= N
         if return_all and nx is not None:
             l   = np.zeros(N)                                      # Compute the distance between successive points on the simplex
@@ -1643,9 +2238,33 @@ class PhaseHull(object):
         else:
             return Gcen<Gcont                                      # If Gcen<Gcont, then this simplex is a simplex of inmiscibility
 
-    def _test_if_simplex_is_tie_line(self,pts,isimnew,sim_ipts,mrcrit=None,nx=None):
+    def _test_if_simplex_is_tie_line(self,pts,isim,sim_ipts,crystals,liquids,solsols,mrcrit=None,nx=None):
         if mrcrit is None: mrcrit=self.mrcrit
         assert self.ncomponents>2, 'Internal Error: Should not call _test_if_simplex_is_tie_line for binaries'
+
+        # Do preliminary tests, by which we can already exclude this simplex being
+        # a tie line.
+
+        if self.ncomponents==3:
+
+            # For ternaries the following exclusions (i.e. not being a tie line) apply:
+
+            if len(crystals)>1: return False
+            if len(set(liquids))==len(liquids) and len(set(solsols))==len(solsols): return False
+
+        else:
+            
+            # For quaternaries and higher, we have not yet really formulated the rules for
+            # what constitutes a tie line and what not. For now we declare all to be NOT tie lines.
+
+            return False
+
+        # Now that the current simplex might perhaps be a tie line, we check for its
+        # geometry. If it is a tie line, it should be a needle like geometry. We
+        # compare the length to its width. This is, unfortunately, a very inaccurate
+        # method, which is resolution-dependent. Especially at low resolution this
+        # might go wrong. So beware.
+        
         if nx is None:
             if hasattr(self,'gridsnres'):
                 nx = self.gridsnres[-1]
@@ -1655,7 +2274,7 @@ class PhaseHull(object):
         npt = len(pts)
         x   = np.zeros((N+1,N))
         for i in range(N):
-            x[i,:-1] = pts[sim_ipts[isimnew][i]][:-1]
+            x[i,:-1] = pts[sim_ipts[isim][i]][:-1]
             x[i,-1]  = 1-x[i,:-1].sum(axis=-1)
         x[-1,:] = x[0,:]
         l   = np.zeros(N)
@@ -1665,17 +2284,62 @@ class PhaseHull(object):
         mr = l.min()/dx   # Note: Here use min()
         return mr<=mrcrit
 
+    def _test_if_simplex_is_inmiscible_solid_solutions(self,pts,isim,sim_ipts,names):
+        # Check for inmiscibility in a solid solution. Similar to
+        # _test_if_simplex_is_inmiscible_liquids(), but now only for
+        # a solid solution, and without the nx and return_all options.
+        # For now this is only used for simplices that are purely
+        # solid solutions, but later one could also use this to check
+        # if e.g. a single crystal (outside the plane of the solid
+        # solution) connects to two points on the solid solution that
+        # both form an inmiscibility gap.
+        N   = len(pts[0])                                          # Nr of components 
+        npt = len(pts)                                             # Nr of points available (not all are part of the convex hull)
+        solsolnames = []
+        for i in range(N):
+            if names[i][0]=='+':
+                solsolnames.append(names[i][1:])
+        solsolnames = list(set(solsolnames))
+        assert len(solsolnames)>0, 'Error in _test_if_simplex_is_inmiscible_solid_solutions(): No corner point is a solid solution.'
+        answers = {}
+        for ssname in solsolnames:
+            isolsol  = self.solsolnames[ssname]
+            solsol   = self.solsols[isolsol]
+            M        = solsol.ygrid.shape[-1]   # Nr of endmembers of this solid solution
+            assert M<=N, 'Error: Solid solution has more endmembers than the components of this phase diagram.'
+            icorners = []
+            for i in range(N):
+                if names[i][1:]==ssname:
+                    icorners.append(i)
+            if len(icorners)>1:  # You can only have 'inmiscibility' for 2 or more points on the same solid solution
+                y   = np.zeros((len(icorners),M))                  # Y molar fractions of the corner points of this simplex
+                for i in range(len(icorners)):
+                    y[i,:] = self.theyvals[-1][sim_ipts[isim][icorners[i]]]
+                ycen  = y.mean(axis=0)                             # The center of this simplex in y-space
+                ycen  = np.stack([ycen])
+                Gcont = solsol.Gfunc(ycen)*solsol.mfGfact          # Compute the real G at this center
+                Gcen  = 0.                                         # Now compute the mean of the G values at the corners of the simplex
+                for i in range(len(icorners)):
+                    Gcen += pts[sim_ipts[isim][i]][-1]
+                Gcen /= len(icorners)
+                answers[ssname] = Gcen<Gcont                       # If Gcen<Gcont, then this simplex is a simplex of inmiscibility
+            else:
+                answers[ssname] = False
+        return answers
+
     def refine_near_binodals_2d(self,pts,simplices,nx,nfact=2,nspan=1,return_newnx=False):
         eps      = 1e-3
-        nend     = len(pts[0])
-        assert nend==3, 'Error: refine_near_binodals_2d() only works with 3 components.'
+        ncomp    = len(pts[0])
+        assert ncomp==3, 'Error: refine_near_binodals_2d() only works with 3 components.'
         tie_lines = []
         for isim in range(len(simplices['id'])):
             #
             # ADD MORE OF THESE TRIGGERS FOR TERNARY OR HIGHER
             #
             if simplices['stype'][isim]=='tieline_c0l3' or \
-               simplices['stype'][isim]=='tieline_c1l2':
+               simplices['stype'][isim]=='tieline_c1l2' or \
+               simplices['stype'][isim]=='tieline_c0l2s1' or \
+               simplices['stype'][isim]=='tieline_c0l1s2':
                 tie_lines.append(isim)
         nxnew    = (nx-1)*nfact+1
         gridold  = (np.stack(pts)[:,:-1]*(nx-1)+eps).astype(int)
@@ -1686,8 +2350,8 @@ class PhaseHull(object):
         gaddnew  = set()
         for ib in tie_lines:
             for x in simplices['x'][ib]:
-                gr = (x[:nend-1]*(nx-1)+eps).astype(int) * nfact
-                # Next lines only work for nend==3
+                gr = (x[:ncomp-1]*(nx-1)+eps).astype(int) * nfact
+                # Next lines only work for ncomp==3
                 gadd  = set()
                 for ix0 in range(gr[0]-nspan*nfact,gr[0]+nspan*nfact+1):
                     for ix1 in range(gr[1]-nspan*nfact,gr[1]+nspan*nfact+1):
@@ -1696,14 +2360,68 @@ class PhaseHull(object):
                 gaddnew = gaddnew.union(gadd)
         gridnset = gridnset.union(gaddnew)
         grnew    = np.stack(list(gridnset))
-        xnew     = np.zeros((len(grnew),nend))
+        xnew     = np.zeros((len(grnew),ncomp))
         xnew[:,:-1] = grnew.astype(float)/(nxnew-1)
         xnew[:,-1]  = 1-xnew[:,:-1].sum(axis=-1)
         Gnew     = np.zeros(len(grnew))
         idsnew   = np.zeros(len(grnew),dtype=int)
-        for i in range(len(grnew)):
-            Gnew[i],idsnew[i] = self.call_Gfunctions(self.components,xnew[i])
-        ptsnew   = xnew
+        for l,liq in enumerate(self.liquids):
+            liq.xgrid     = xnew
+            liq.Ggrid     = np.zeros(len(xnew))
+        for ix in range(len(grnew)):
+            G,id,Gl             = self.call_Gfunctions_liquids(self.components,xnew[ix],return_Gliq=True)
+            Gnew[ix],idsnew[ix] = G,id
+            for l,liq in enumerate(self.liquids):
+                liq.Ggrid[ix] = Gl[l]
+        ptsnew   = xnew.copy()
+        ptsnew[:,-1] = Gnew[:]
+        if return_newnx:
+            return ptsnew,idsnew,nxnew
+        else:
+            return ptsnew,idsnew
+
+    def refine_near_a_point_2d(self,pts,simplices,nx,xx,nfact=2,nspan=1,niter=1,return_newnx=False):
+        if len(xx.shape)<2:
+            xx   = np.stack([xx])
+        eps      = 1e-3
+        ncomp    = len(pts[0])
+        assert ncomp==3, 'Error: refine_near_a_point_2d() only works with 3 components.'
+        gridold  = (np.stack(pts)[:,:-1]*(nx-1)+eps).astype(int)
+        check    = (np.stack(pts)[:,:-1]*(nx-1)+1-eps).astype(int)
+        assert np.all(gridold==check), f'Error: Current grid is finer than 1/{nx-1}'
+        for iiter in range(niter):
+            nxnew    = (nx-1)*nfact+1
+            gridnew  = gridold * nfact
+            gridnset = set([tuple(g) for g in gridnew])
+            gaddnew  = set()
+            for x in xx:
+                gr       = (x[:ncomp-1]*(nx-1)+eps).astype(int) * nfact
+                # Next lines only work for ncomp==3
+                gadd     = set()
+                for ix0 in range(gr[0]-nspan*nfact,gr[0]+nspan*nfact+1):
+                    for ix1 in range(gr[1]-nspan*nfact,gr[1]+nspan*nfact+1):
+                        if ix0>=0 and ix1>=0 and ix0+ix1<nxnew:
+                            gadd.add((ix0,ix1))
+                gaddnew  = gaddnew.union(gadd)
+            gridnset = gridnset.union(gaddnew)
+            grnew    = np.stack(list(gridnset))
+            # For the potential next iteration
+            nx       = nxnew
+            gridold  = grnew
+        xnew     = np.zeros((len(grnew),ncomp))
+        xnew[:,:-1] = grnew.astype(float)/(nxnew-1)
+        xnew[:,-1]  = 1-xnew[:,:-1].sum(axis=-1)
+        Gnew     = np.zeros(len(grnew))
+        idsnew   = np.zeros(len(grnew),dtype=int)
+        for l,liq in enumerate(self.liquids):
+            liq.xgrid     = xnew
+            liq.Ggrid     = np.zeros(len(xnew))
+        for ix in range(len(grnew)):
+            G,id,Gl             = self.call_Gfunctions_liquids(self.components,xnew[ix],return_Gliq=True)
+            Gnew[ix],idsnew[ix] = G,id
+            for l,liq in enumerate(self.liquids):
+                liq.Ggrid[ix] = Gl[l]
+        ptsnew   = xnew.copy()
         ptsnew[:,-1] = Gnew[:]
         if return_newnx:
             return ptsnew,idsnew,nxnew
@@ -2105,7 +2823,7 @@ class PhaseHull(object):
         # confusion cannot happen.
         # 2025-09-15
         
-        mask    = hull.equations[:,-2]<0     # Select bottom of the hull
+        mask    = hull.equations[:,-2]<-self.epsequ   # Select bottom of the hull
         nvec    = hull.equations[mask,:-1]   # Normal vectors of the simplices (at bottom)
         offset  = hull.equations[mask,-1]    # Offset of simplices from origin (at bottom)
         if type(x) is list:
@@ -2127,44 +2845,83 @@ class PhaseHull(object):
         else:
             return simid
 
-    def make_component_name_list_for_big_X_vector(self,fullname=False):
-        # Create the list of component names, so that the resulting Xbig
+    def get_simplex_for_given_x(self,x,ilevel=-1):
+        """
+        Given a value of x (no list of x points allowed!), this function
+        returns a dict with all the properties of the simplex of the convex
+        hull on which this point lies.
+
+        Arguments:
+
+          x         Location x[0:N] where to find the simplex
+
+        Returns:
+
+          simplex   Dict of all properties of the simplex. This is
+                    essentially a single row of the 'dict of lists'
+                    of self.thesimplices[-1]. 
+        """
+        from phasehull.phasehull_support import get_row_from_DL
+        x = np.stack(x)
+        assert len(x.shape)==1, 'Error in get_simplex_for_given_x(): x can only be a single point (must be an array of dimension 1).'
+        isim = self.find_simplex_for_given_x(x,return_G=False,ilevel=ilevel)[0]
+        return get_row_from_DL(self.thesimplices[ilevel],isim)
+
+    def make_component_name_list_for_big_Y_vector(self,fullname=False):
+        # Create the list of component names, so that the resulting bigY
         # vector is easier to interpret.
         if fullname:
             col = 'Mineral'
         else:
             col = 'Abbrev'
-        self.bigX_component_names = []
-        if self.nsol>0:
-            for isol in range(self.nsol):
-                self.bigX_component_names.append(self.crystals[0].dbase[col].iloc[isol])
+        self.bigY_component_names = []
+        if self.ncryst>0:
+            for isol in range(self.ncryst):
+                self.bigY_component_names.append(self.crystals[0].dbase[col].iloc[isol])
         if self.nliq>0:
             for iliq,liq in enumerate(self.liquids):
-                ilq0 = self.nsol+iliq*self.ncomponents
+                ilq0 = self.ncryst+iliq*self.ncomponents
                 for iend in range(self.ncomponents):
-                    self.bigX_component_names.append(liq.name+'_'+self.components[iend])
+                    self.bigY_component_names.append(liq.name+'_'+self.components[iend])
+        return self.bigY_component_names
 
-    def find_composition_for_given_x(self,x,simid=None,ilevel=-1):
+    def find_composition_for_given_x(self,x,simid=None,ilevel=-1,return_simid=False):
         """
         Once you have the phase diagram, you may want to determine the actual
         chemical composition of a material for a given component-composition x:
         The fraction of each possible mineral from the self.crystals database,
         and the amount of liquid (and the component-composition of the liquid) 
         for each liquid from the self.liquids list. This is done with this
-        function. 
+        function.
+
+        Arguments:
+
+          x         Location x[0:N] or array of locations x[0:nx,0:N]
+                    where the interpolation should be done.
+
+        Returns:
+
+          bigY      The big X vector with all the phases.
+
+        If return_simid==True, then it also returns
+
+          simid     The simplex id at each point
+
+        Note: To know which phase is which component of bigY, you can look
+              at self.bigY_component_names.
         """
         if type(x) is list: x=np.array(x)
         if len(x.shape)==1: x=x[None,:]
-        if not hasattr(self,'bigX_component_names'):
-            self.make_component_name_list_for_big_X_vector()
+        if not hasattr(self,'bigY_component_names'):
+            self.make_component_name_list_for_big_Y_vector()
         simplices = self.thesimplices[ilevel]
         if simid is None:
             simid = self.find_simplex_for_given_x(x,return_G=False,ilevel=ilevel)
         else:
             assert len(x)==len(simid), 'Error: Nr of simplex-indices unequal to nr of points'
         nx      = x.shape[0]                               # Nr of x vectors to interpolate at
-        ncomp   = self.nsol + self.nliq*self.ncomponents   # Size of the Xbig vector
-        Xbig    = np.zeros((nx,ncomp))
+        ncomp   = self.ncryst + self.nliq*self.ncomponents   # Size of the bigY vector
+        bigY    = np.zeros((nx,ncomp))
         for ix in range(nx):
             xcorners = simplices['x'][simid[ix]]
             ipts     = simplices['ipts'][simid[ix]]
@@ -2175,18 +2932,53 @@ class PhaseHull(object):
                 if type(idd) is str:
                     # This corner point is a crystal
                     k          = self.crystals[-1].index[idd]
-                    Xbig[ix,k] = weight[iend]
+                    bigY[ix,k] = weight[iend]
                 else:
                     # This corner point is a liquid
                     for iliq,liq in enumerate(self.liquids):
-                        ilq0 = self.nsol+iliq*self.ncomponents
-                        Xbig[ix,ilq0:ilq0+self.ncomponents] += weight[iend]*xcorners[iend,:]
-        return Xbig
+                        ilq0 = self.ncryst+iliq*self.ncomponents
+                        bigY[ix,ilq0:ilq0+self.ncomponents] += weight[iend]*xcorners[iend,:]
+        if return_simid:
+            return bigY,simid
+        else:
+            return bigY
+
+    def cut_through_phase_diagram_1d(self,xstart,xend,nx=100,ilevel=-1):
+        """
+        This method will return a bigY vector (vector of abundances of all
+        possible phases) as well as the id (index) of the simplex at a
+        1D series of points between xstart and xend. It therefore acts
+        as 1D 'probe' of the phase diagram, much like 'ice core drilling'
+        on antarctica.
+
+        Arguments:
+
+          xstart     The starting position of the 1D 'drill'
+          xend       The ending position of the 1D 'drill'
+
+        Optional:
+        
+          nx         The nr of points of the 1D 'drill. Default=100.
+
+        Returns:
+
+          s          The 1D coordinate along the path
+          x          The array of x positions along the path
+          bigY       The 2D array containing the abundances of all
+                     the phases. NOTE: You can find the names of these
+                     phases in self.bigY_component_names.
+          simid      The array of simplex indices
+        """
+        ncomp      = self.ncomponents
+        s          = np.linspace(0,1,nx)
+        x          = (1-s[:,None])*xstart[None,:] + s[:,None]*xend[None,:]
+        bigY,simid = self.find_composition_for_given_x(x,ilevel=-1,return_simid=True)
+        return s,x,bigY,simid
 
     def map_phase_diagram(self,nres=100,ilevel=-1,colormap=None):
         simplices       = self.thesimplices[ilevel]
         answer          = {}
-        answer['x']     = self.make_x_grid(nres)
+        answer['x']     = make_x_grid(nres,self.ncomponents)
         answer['isim']  = self.find_simplex_for_given_x(answer['x'])
         answer['stype'] = []
         if colormap is not None:
@@ -2201,3 +2993,50 @@ class PhaseHull(object):
                     color = np.nan
                 answer['color'].append(color)
         return answer
+
+#---------------------------------------------------------------------------
+# Some functions used in the above classes
+#---------------------------------------------------------------------------
+def make_integer_grid(nres,ncomponents):
+    """
+    The function that constructs the base grid in integer form. Note
+    that for 3 enmembers the grid is triangular, for 4 components
+    the grid is a tetrad, etc. The integer grid is constructed in
+    a way that the full allowed space is uniformly mapped with
+    nres points along each axis. 
+    """
+    ixgrid = set()
+    if ncomponents==2:
+        for ix0 in range(0,nres+1):
+            if ix0>=0 and ix0<=nres:
+                k = nres - ix0
+                ixgrid.add((ix0,k))
+    elif ncomponents==3:
+        for ix0 in range(0,nres+1):
+            for ix1 in range(0,nres+1):
+                if ix0>=0 and ix1>=0 and ix0+ix1<=nres:
+                    k = nres - ix0 - ix1
+                    ixgrid.add((ix0,ix1,k))
+    elif ncomponents==4:
+        for ix0 in range(0,nres+1):
+            for ix1 in range(0,nres+1):
+                for ix2 in range(0,nres+1):
+                    if ix0>=0 and ix1>=0 and ix2>=0 and ix0+ix1+ix2<=nres:
+                        k = nres - ix0 - ix1 - ix2
+                        ixgrid.add((ix0,ix1,ix2,k))
+    else:
+        raise ValueError(f'Unfortunately at the moment we cannot handle nr of components = {ncomponents}')
+    ixgrid = list(ixgrid)
+    ixgrid.sort()
+    ixgrid = np.array(ixgrid)
+    return ixgrid
+
+def make_x_grid(nres,ncomponents):
+    """
+    Wrapper around make_integer_grid(), where the integer values are rescaled back
+    to values between 0 and 1.
+    """
+    ixgrid = make_integer_grid(nres,ncomponents)
+    x      = ixgrid / nres
+    return x
+

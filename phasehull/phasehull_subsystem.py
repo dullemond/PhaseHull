@@ -9,7 +9,10 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from phasehull import dissect_oxide
+try:
+    from phasehull import dissect_oxide
+except:
+    from phasehull_support import dissect_oxide
 import scipy
 
 class SubSystem(object):
@@ -19,6 +22,12 @@ class SubSystem(object):
         two overlapping component systems: a primitive one (consisting of the
         most basic units only, e.g. the MgO, Al2O3, SiO2 system), and a composite
         one, (e.g. the Mg2SiO4, SiO2 subsystem or the Mg2SiO4, Al2O3, SiO2 system).
+
+        NOTE: In the literature such composite components are often referred to
+              as "complex components", while our primitive components are often
+              referred to as "simple oxides". See e.g., Ghiorso & Carmichael 1980
+              Contrib. Mineral. Petrol. 71, 323-342; Hastie & Bonnell 1986, Journal
+              of Non-Crystalline Solids 84, 151-158.
 
         The composite subsystem can either be lower-dimensional (like in the
         example of the binary Mg2SiO4, SiO2 subsystem embedded in the ternary
@@ -49,11 +58,17 @@ class SubSystem(object):
                               composite components, e.g. MnSi0.5O2 which would
                               mean you give Mn2SiO4 as composite component,
                               and set the weight to 0.5 for that one. It is not
-                              possible to use MnSi0.5O2 directly as an component.
+                              possible to use MnSi0.5O2 directly as a component
+                              formula (because the formula interpreter cannot
+                              handle non-integers), but by choosing Mn2SiO4 as
+                              the formula (the string / name) of that component
+                              and setting the corresponding value of the
+                              comp_comp_weights to 0.5, you have effectively
+                              chosen MnSi0.5O2 as a composite component.
 
           If both G_comp_prim and G_comp_comp are given, then SubSystem can
-          compute the difference in the plane spanned by the composite
-          system components and the plane spanned by the primitive 
+          compute the difference in the Gibss surface spanned by the composite
+          system components and the Gibbs surface spanned by the primitive 
           system components (the latter: values at the location of the
           composite components). This allows easier comparison between
           the mixing Gibbs surfaces of the two systems. For more details: see
@@ -101,27 +116,43 @@ class SubSystem(object):
         if self.ncomp_comp==self.ncomp_prim:
             self.nu_comp_prim  = scipy.linalg.inv(self.nu_prim_comp)
 
-    def compute_ratio_of_nmoles_in_comp_to_nmoles_in_prim(self,xcomp):
+    def compute_mole_ratio_from_comp_to_prim(self,xcomp):
         """
         If you mix 1 mole of composite components with mole fractions xcomp,
-        you get M moles of liquid (where M will depend on how you define the
-        formula unit of the liquid particles). If you now compute the
-        mole fractions in the primitive system, xprim, corresponding to xcomp,
-        then the number of moles of components is typically no longer 1 mole.
-        Yet, physically, the number of moles M of liquid particles should
-        be the same. Or to put it differently, if you now take 1 mole of the
-        primitive components at mole fraction xprim, then you get less liquid
-        than when you mixed the composite components, because you typically
-        need more moles of primitive components than composite components
-        for the same liquid formula.
+        and you now translate this into the primitive system components, how 
+        many moles of primitive system components does this become? This is 
+        what we call the "mole ratio from the composite component system to 
+        the primitive component system". For example: the system of composite
+        components [SiO2,Mg2SiO4] translated into the system of primitive
+        components [SiO2,MgO]. If you have xcomp=[0,1], meaning you have
+        only Mg2SiO4, then this translates into xprim=[(1/3),(2/3)] (see
+        method convert_from_xcomp_to_xprim() below). One mole worth of
+        Mg2SiO4 equals 3 moles worth of SiO2 and MgO (1 mole of SiO2 and
+        2 moles of MgO). So the mole ration from [SiO2,Mg2SiO4] to [SiO2,MgO]
+        at xcomp=(0,1) is 3, while at xcomp=(1,0) it is 1. It is a linear
+        function of the xcomp coordinates (but can be a non-linear function
+        of the xprim coordinates). So for xcomp=(0.5,0.5) its value is 2
+        in the above example.
 
-        To compare results from the composite and primitive systems to each
-        other, one must correct for this. One way to do this is to use mass
-        fractions instead of mole fractions. But here, instead, we compute
-        for all given xcomp values, the ratio of the nr of moles of liquid
-        (in whatever formula unit, does not matter) from 1 mole of components
-        in the composite system to the nr of moles of liquid from 1 mole of
-        components in the primitive system.
+        Note: This function is only offered in this direction (composite
+        to primitive). The inverse function would simply be that you
+        convert xprim into pcomp, call compute_mole_ratio_from_comp_to_prim()
+        and then take the inverse (1/...) of the result. The reason why
+        this function is not added here is because the primitive system
+        is allowed to be a subspace (lower dimensional) of the primitive
+        system (for solid solutions), in which case the inverse, starting
+        from an arbitrary xprim, may not be defined, as the xprim location
+        may be out of the plane of the subspace. Yet, when embedding such
+        a lower-dimensional solid solution space into a primitive (or non
+        primitive, but in the context of this module still 'primitive')
+        larger dimensional system, you need to multiply the Gibbs free energy 
+        of the composite system by the inverse of the mole ratio from the
+        composite (solid solution) system to the primitive (full) system.
+
+        Final note: The result of compute_mole_ratio_from_comp_to_prim()
+        at the pure xcomp locations (in the above example [1.,0.] and
+        [0.,1.]) are the same as the self.comp_nprim values (in the
+        above example these are 1. and 3.).
         """
         xcomp    = np.array(xcomp)
         xcomp    = xcomp/xcomp.sum(axis=-1)[...,None]
@@ -136,7 +167,7 @@ class SubSystem(object):
         you get different quantities of liquid. For a detailed description
         of this problem, see the doc string of the function
 
-           compute_ratio_of_nmoles_in_comp_to_nmoles_in_prim()
+           compute_mole_ratio_from_comp_to_prim()
 
         So if you want to compare the Gibbs energies obtained in these
         two systems, you must correct for this difference in amount of
@@ -155,9 +186,40 @@ class SubSystem(object):
                    compared to Gibbs energies in the primitive end member
                    system.
         """
-        ntotprim = self.compute_ratio_of_nmoles_in_comp_to_nmoles_in_prim(xcomp)
+        Gcomp    = np.array(Gcomp)
+        ntotprim = self.compute_mole_ratio_from_comp_to_prim(xcomp)
         Gprim    = Gcomp/ntotprim
         return Gprim
+
+    def convert_G_value_from_primitive_to_composite_system(self,xprim,Gprim,out_of_bounds_nan=True):
+        """
+        The inverse of convert_G_value_from_composite_to_primitive_system().
+        Note that this is only possible if the composite system has the same
+        number of independent components as the primitive system.
+        Arguments:
+
+          xprim    A 2D array of x values x[nx,nprim] (where nprim is the
+                   number of components) for which the conversion should
+                   be done.
+          Gprim    Array of Gibbs energies for each of the xprim values.
+
+          out_of_bounds_nan   If True, then whereever the resulting ncomp has
+                              negative values (i.e. the nprim was outside of
+                              the scope of the composite subsystem) these
+                              values will be set to np.nan.
+
+        Returns:
+
+          Gcomp    The corrected Gibbs energies that now can be safely
+                   compared to Gibbs energies in the primitive end member
+                   system.
+        """
+        assert hasattr(self,'nu_comp_prim'), 'Error: Can only convert G from primitive to composite system if both have the same dimension.'
+        Gprim    = np.array(Gprim)
+        xcomp    = self.convert_from_xprim_to_xcomp(xprim,out_of_bounds_nan=out_of_bounds_nan)
+        ntotcomp = 1/(self.compute_mole_ratio_from_comp_to_prim(xcomp)+1e-99)
+        Gcomp    = Gprim/ntotcomp
+        return Gcomp
 
     def compute_G_nomix_in_prim_system_at_locations_of_composite_components(self):
         """
@@ -167,13 +229,13 @@ class SubSystem(object):
         useful? That is because if we want to compare the G curves of the composite system
         to those of the primitive system, we typically want to subtract the linear plane
         of the linear (unmixed) combination of the primitive components, because otherwise
-        the figures/plots are dominated by the (uninteresting) sum_i x_i G_i plane, and
-        the (interesting) parts sum_i x_i log(x_i) + sum W_ij x_i x_j are too small to
-        really see on the plot. If we subtract the sum_i x_i G_i plane (the one from the
-        primitive components) then the sum_i x_i log(x_i) + sum W_ij x_i x_j of the
+        the figures/plots are dominated by the (uninteresting) sum_i x_i mu^0_i plane, and
+        the (interesting) parts sum_i RT x_i log(x_i) + sum W_ij x_i x_j are too small to
+        really see on the plot. If we subtract the sum_i x_i mu^0_i plane (the one from the
+        primitive components) then the sum_i RT x_i log(x_i) + sum W_ij x_i x_j of the
         primitive components will be 0 at all components, but the one of the
         composite components will not be 0 at (their) components. The differences are
-        the ones calculated here, so that the sum_i x_i log(x_i) + sum W_ij x_i x_j
+        the ones calculated here, so that the sum_i RT x_i log(x_i) + sum W_ij x_i x_j
         curves of the composite components can be easily overplotted over the ones
         of the primitive components. Note that, in principle, for the locations where the
         composite and primitive components are the same, the G_comp_comp should be
@@ -187,10 +249,11 @@ class SubSystem(object):
         Returns:
 
            G_nomix    The values of the Gibbs energy at the location of the composite
-                      components, computed using linear mean of the primitive components
-                      (i.e. no contributions for chemical mixing). And because often
-                      more primitive components are needed to build one composite
-                      formula, the result is divided by self.comp_nprim, to be able
+                      components, computed using linear mean of the mu^0 values of
+                      the primitive components (i.e. no contributions for mixing).
+                      And because often more primitive components are needed to build
+                      one composite component (see compute_mole_ratio_from_comp_to_prim()
+                      above), the result is divided by self.comp_nprim, to be able
                       to compare to the G functions living on the primitive space.
         """
         G_nomix  = (np.array(self.G_comp_prim)[:,None]*self.nu_prim_comp/self.comp_nprim[None,:]).sum(axis=0)
@@ -238,7 +301,47 @@ class SubSystem(object):
         xprim = nprim/nprim.sum(axis=-1)[...,None]
         return xprim
     
-    def convert_from_nprim_to_ncomp(self,nprim):
+    def convert_activity_from_comp_to_prim(self,acomp):
+        """
+        If you have computed the activities of the composite components, this
+        function will return the corresponding activities of the primitive
+        components.
+
+        Arguments:
+
+          acomp   The activities of the components in the composite system
+
+        Returns:
+
+          aprim   The activities of the components in the primitive system
+        """
+        assert hasattr(self,'nu_comp_prim'), 'Error: Can only convert activity from composite to primitive system if both have the same dimension.'
+        acomp  = np.array(acomp)
+        lacomp = np.log(acomp)
+        laprim = (self.nu_comp_prim[...,:,:]*lacomp[...,:,None]).sum(axis=-2)
+        aprim  = np.exp(laprim)
+        return aprim
+
+    def convert_chemical_potential_from_comp_to_prim(self,mucomp):
+        """
+        If you have computed the chemical potentials of the composite components, 
+        this function will return the corresponding chemical potentials of the primitive
+        components.
+
+        Arguments:
+
+          mucomp   The chemical potentials of the components in the composite system
+
+        Returns:
+
+          muprim   The chemical potentials of the components in the primitive system
+        """
+        assert hasattr(self,'nu_comp_prim'), 'Error: Can only convert chemical potentials from composite to primitive system if both have the same dimension.'
+        mucomp  = np.array(mucomp)
+        muprim = (self.nu_comp_prim[...,:,:]*mucomp[...,:,None]).sum(axis=-2)
+        return muprim
+
+    def convert_from_nprim_to_ncomp(self,nprim,out_of_bounds_nan=True):
         """
         If you have mole in the primitive component system, nprim, then
         this function returns the moles in the composite component system.
@@ -261,6 +364,7 @@ class SubSystem(object):
           ncomp    Array of values of the moles in the composite system. Note that
                    the sum of ncomp.sum() does in general not equal nprim.sum()
         """
+        assert hasattr(self,'nu_comp_prim'), 'Error: Can only convert n from primitive to composite system if both have the same dimension.'
         nprim = np.array(nprim)
         ncomp = (self.nu_comp_prim[...,:,:]*nprim[...,None,:]).sum(axis=-1)
         if out_of_bounds_nan:
@@ -289,6 +393,7 @@ class SubSystem(object):
 
           xcomp   Array of values of the mole fractions in the composite system.
         """
+        assert hasattr(self,'nu_comp_prim'), 'Error: Can only convert x from primitive to composite system if both have the same dimension.'
         xprim = np.array(xprim)
         xprim = xprim/xprim.sum(axis=-1)[...,None]
         ncomp = (self.nu_comp_prim[...,:,:]*xprim[...,None,:]).sum(axis=-1)
@@ -296,6 +401,45 @@ class SubSystem(object):
         if out_of_bounds_nan:
             xcomp[np.any(xcomp<0,axis=-1)] = np.nan
         return xcomp
+
+    def convert_activity_from_prim_to_comp(self,aprim):
+        """
+        If you have computed the activities of the primitive components, this
+        function will return the corresponding activities of the composite
+        components.
+
+        Arguments:
+
+          aprim   The activities of the components in the primitive system
+
+        Returns:
+
+          acomp   The activities of the components in the composite system
+        """
+        aprim  = np.array(aprim)
+        laprim = np.log(aprim)
+        lacomp = (self.nu_prim_comp[...,:,:]*laprim[...,:,None]).sum(axis=-2)
+        acomp  = np.exp(lacomp)
+        return acomp
+        
+    def convert_chemical_potential_from_prim_to_comp(self,muprim):
+        """
+        If you have computed the chemical potentials of the primitive components, 
+        this function will return the corresponding chemical potentials of the composite
+        components.
+
+        Arguments:
+
+          muprim   The chemical potentials of the components in the primitive system
+
+        Returns:
+
+          mucomp   The chemical potentials of the components in the composite system
+        """
+        muprim  = np.array(muprim)
+        mucomp = (self.nu_prim_comp[...,:,:]*muprim[...,:,None]).sum(axis=-2)
+        return mucomp
+        
 
 # ==================================================================================
 # Examples

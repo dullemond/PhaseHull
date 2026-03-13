@@ -202,6 +202,8 @@ class Margules(object):
                      parameters multiplied by the x values. [J/mol]
     
         """
+        if self.ncomp==1:
+            return 0.0
         self.ensure_x_2d(x,check=check)
         Gnonideal  = np.zeros_like(x[...,0])
         WG         = self.compute_w_gibbs(T,P=P)
@@ -241,14 +243,16 @@ class Margules(object):
           Gmixideal  The ideal part of the mixing G in [J/mol]
 
         """
+        if self.ncomp==1:
+            return 0.0
         self.ensure_x_2d(x,check=check)
         Gideal = self.Rgas * T * (x*np.log(x+1e-90)).sum(axis=-1)
         return Gideal
 
-    def get_activity_coefficients_of_components(self,x,T,P=1):
+    def get_rtlog_activity_coefficients_of_components(self,x,T,P=1):
         """
         Using the Margules parameters WG and the molar abundances x (with x.sum()==1),
-        compute the activities a of these liquid components. See equation 22
+        compute the R*T*ln(activity coefficients) of these liquid components. See equation 22
         of Berman & Brown (1984)
 
         Based on code by D. Ebel 2001.
@@ -264,10 +268,12 @@ class Margules(object):
     
         Returns:
     
-          gamma         The activity coefficients such that the activities are
+          RT*ln(gamma)  The RT*ln activity coefficients such that the activities are
                         computed by a = gamma * x
 
         """
+        if self.ncomp==1:
+            return 1.0
         assert len(x.shape)<=2, 'Error: This function can only accept a single x vector or a 1d set of x vectors.'
         x          = np.array(x)
         assert x.shape[-1]==self.ncomp, 'Error: Nr of x-dimensions unequal to nr of components'
@@ -306,9 +312,51 @@ class Margules(object):
                                     if(m==k): q+=1
                                     if(m==l): q+=1
                                     rtlngamma[m] += WG[i,j,k,l] * ( (q*x[i]*x[j]*x[k]*x[l])/(x[m]+1e-99) + pp*x[i]*x[j]*x[k]*x[l] )
-        gamma = np.exp(rtlngamma / (self.Rgas*T))
-        return gamma
+        return rtlngamma
 
+    def get_activity_coefficients_of_components(self,x,T,P=1):
+        """
+        Compute the activity coefficients gamma of these liquid components.
+
+        Arguments:
+    
+          x             The molar(!) fractions x
+    
+          T             Temperature in Kelvin
+
+          P             Pressure in bar
+    
+        Returns:
+    
+          gamma         The activity coefficients such that the activities are
+                        computed by a = gamma * x
+
+        """
+        rtlngamma = self.get_rtlog_activity_coefficients_of_components(x=x,T=T,P=P)
+        gamma     = np.exp(rtlngamma / (self.Rgas*T))
+        return gamma
+        
+    def get_activities_of_components(self,x,T,P=1):
+        """
+        Compute the activities a of these liquid components.
+
+        Arguments:
+    
+          x             The molar(!) fractions x
+    
+          T             Temperature in Kelvin
+
+          P             Pressure in bar
+    
+        Returns:
+    
+          a             The activities of the components
+        
+        """
+        gamma    = self.get_activity_coefficients_of_components(x=x,T=T,P=P)
+        a        = x*gamma
+        return a
+        
     def symmetrize_w(self,W,indices):
         value = self.find_value_and_check_symmetry_w(W,indices)
         self.fill_w(W,indices,value)
@@ -335,3 +383,213 @@ class Margules(object):
         if check:
             assert np.all(np.abs(x.sum(-1)-1)<1e-10), 'Error: x do not sum to 1'
         return x
+
+    #------------------------------------------------------------------------------
+    # Below are some functions not directly necessary, but useful for e.g.
+    # comparison to other databases
+    #------------------------------------------------------------------------------
+
+    def compute_interaction_H(self,x,T,P=1,check=True):
+        """
+        Compute non-ideal contribution to the mixing enthalpy using
+        Margules parameters. It is the Sum of the Margules parameters
+        multiplied by the x values.
+    
+        Arguments:
+    
+          x          The array of molar(!) fractions. This can be a single
+                     set of x values x[:] with x.sum()==1, or an array of
+                     x values x[:,:] with x.sum(axis=-1)==1.
+    
+          T          Temperature in [Kelvin]
+
+          P          Pressure in [bar]
+    
+        Returns:
+    
+          W*x*x...   The enthalpy excess energy according to the Margules
+                     parameters multiplied by the x values. [J/mol]
+    
+        """
+        if self.ncomp==1:
+            return 0.0
+        self.ensure_x_2d(x,check=check)
+        Hnonideal  = np.zeros_like(x[...,0])
+        WH         = self.WH + P*self.WV      # Include WH and the pressure (volume) term
+        if self.polyorder==2:
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    Hnonideal += WH[i,j] * x[...,i]*x[...,j]
+        elif self.polyorder==3:
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
+                        Hnonideal += WH[i,j,k] * x[...,i]*x[...,j]*x[...,k]
+        elif self.polyorder==4:
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
+                        for l in range(k,self.ncomp):
+                            Hnonideal += WH[i,j,k,l] * x[...,i]*x[...,j]*x[...,k]*x[...,l]
+        else:
+            raise ValueError(f'Cannot work with Margules parameters of dimension {self.polyorder}')
+        return Hnonideal
+
+    def compute_interaction_S(self,x,T,P=1,check=True):
+        """
+        Compute non-ideal contribution to the mixing entropy using
+        Margules parameters. It is the Sum of the Margules parameters
+        multiplied by the x values.
+    
+        Arguments:
+    
+          x          The array of molar(!) fractions. This can be a single
+                     set of x values x[:] with x.sum()==1, or an array of
+                     x values x[:,:] with x.sum(axis=-1)==1.
+    
+          T          Temperature in [Kelvin]
+
+          P          Pressure in [bar]
+    
+        Returns:
+    
+          W*x*x...   The entropy excess energy according to the Margules
+                     parameters multiplied by the x values. [J/mol]
+    
+        """
+        if self.ncomp==1:
+            return 0.0
+        self.ensure_x_2d(x,check=check)
+        Snonideal  = np.zeros_like(x[...,0])
+        WS         = self.WS
+        if self.polyorder==2:
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    Snonideal += WS[i,j] * x[...,i]*x[...,j]
+        elif self.polyorder==3:
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
+                        Snonideal += WS[i,j,k] * x[...,i]*x[...,j]*x[...,k]
+        elif self.polyorder==4:
+            for i in range(self.ncomp-1):
+                for j in range(i,self.ncomp):
+                    for k in range(j,self.ncomp):
+                        for l in range(k,self.ncomp):
+                            Snonideal += WS[i,j,k,l] * x[...,i]*x[...,j]*x[...,k]*x[...,l]
+        else:
+            raise ValueError(f'Cannot work with Margules parameters of dimension {self.polyorder}')
+        return Snonideal
+
+    def compute_mixing_S(self,x,check=True):
+        """
+        Compute the mixing entropy S = R sum ( x*ln(x) )
+    
+        Arguments:
+    
+          x          The array of molar(!) fractions. This can be a single
+                     set of x values x[:] with x.sum()==1, or an array of
+                     x values x[:,:] with x.sum(axis=-1)==1.
+
+        Returns:
+
+          Smix       The mixing entropy in [J/mol/K]
+
+        """
+        if self.ncomp==1:
+            return 0.0
+        self.ensure_x_2d(x,check=check)
+        Smix = - self.Rgas * (x*np.log(x+1e-90)).sum(axis=-1)
+        return Smix
+
+#----------------------------------------------------------------------
+# Below are some functions to convert between the binary Margules
+# formalism and the binary Redlich-Kister formalism, as they are
+# simply linear transformations between each other.
+#----------------------------------------------------------------------
+
+def compute_coef_eta(nneg,npos):
+    """
+    For the product
+
+      (1-eta)^nneg * (1+eta)^npos
+
+    it computes the coefficients
+
+      c0 + c1*eta + c2*eta^2 + ...
+
+    Note: Not a smart function, but it works.
+    """
+    from itertools import product
+    l = []
+    for i in range(nneg):
+        l.append(range(0,-2,-1))
+    for i in range(npos):
+        l.append(range(2))
+    c = [0 for _ in range(nneg+npos+1)]
+    for i in product(*l):
+        j = np.array(i)
+        k = int(np.abs(j).sum())
+        s = j[j!=0].prod()
+        c[k] += s
+    return c
+
+def matrix_binary_redlichkister_from_margules(n):
+    """
+    The Redlich-Kister formula is
+
+      x_A * x_B * ( L^0_AB + L^1_AB * eta  + L^2_AB * eta^2 + ... )
+
+    where
+
+      eta = x_B - x_A
+      x_A = 0.5 * ( 1 - eta )
+      x_B = 0.5 * ( 1 + eta )
+
+    The equivalent Margules formula is (for n==2):
+
+      W_ABBB * x_A * x_B^3 + W_AABB * x_A^2 * x_B^2 + W_AAAB * x_A^3 * x_B
+
+    The matrix M produced by this function is (for n==2):
+
+      ( L^0 )       ( W_ABBB )
+      ( L^1 ) = M * ( W_AABB )
+      ( L^2 )       ( W_AAAB )
+    """
+    M = np.zeros((n+1,n+1))
+    for i in range(n+1):
+        c = compute_coef_eta(i,n-i)
+        M[:,i] = np.array(c)
+    M /= 2**n
+    return M
+
+def binary_convert_coefficients_margules_to_redlichkister(Wcoef):
+    n = len(Wcoef)-1
+    M = matrix_binary_redlichkister_from_margules(n)
+    return M@Wcoef
+
+def binary_convert_coefficients_redlichkister_to_margules(Lcoef):
+    n = len(Lcoef)-1
+    M = np.linalg.inv(matrix_binary_redlichkister_from_margules(n))
+    return M@Lcoef
+
+def binary_redlichkister(Lcoef,xA,xB):
+    xAB = xA*xB
+    eta = xB-xA
+    if np.isscalar(xA):
+        res = 0.0
+    else:
+        res = np.zeros_like(xA)
+    for i,L in enumerate(Lcoef):
+        res += xAB*L*eta**i
+    return res
+
+def binary_margules(Wcoef,xA,xB):
+    if np.isscalar(xA):
+        res = 0.0
+    else:
+        res = np.zeros_like(xA)
+    n = len(Wcoef)-1
+    for i,W in enumerate(Wcoef):
+        res += W*xA**(1+i)*xB**(n+1-i)
+    return res

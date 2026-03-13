@@ -11,6 +11,7 @@ setup(
     packages=['phasehull','mineral_systems'],
     install_requires=['scipy',
                       'numpy',
-                      'matplotlib'
+                      'matplotlib',
+                      'mpltern'
                       ],
 )
