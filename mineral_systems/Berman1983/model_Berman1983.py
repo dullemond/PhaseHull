@@ -474,7 +474,7 @@ class Berman83(object):
           modifies the mdb database in-place.
         
         """
-        if T!=self.T: self.reset(T)
+        #if T!=self.T: self.reset(T)
         mdb['DfG']   = 1e90   # The DfG per mole of this substance
         if not no_mfDfG:
             mdb['mfDfG'] = 1e90   # The DfG per mole of the constituent components
