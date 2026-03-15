@@ -1,0 +1,13 @@
+This is an implementation of the quaternary model presented in the PhD thesis of
+Robert Berman 1983.
+
+https://open.library.ubc.ca/soa/cIRcle/collections/ubctheses/831/items/1.0052362
+
+with one small typo fix of the S A M M value of the Margules coefficents. In
+Beckett's code (and Yoneda's), the correct numbers are printed. Error found and
+corrected by Denton Ebel in his implementation of the Berman 1983 model, see
+https://research.amnh.org/~debel/vapors1/codes/B83a/B83acts1.txt
+
+The Berman 1983 model describes the system SiO2, MgO, CaO, Al2O3. 
+
+2026-03-15

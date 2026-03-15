@@ -1,0 +1,14 @@
+This is an implementation of the Berman 1988 internally consistent database of
+minerals of the system Na2O-K2O-CaO-MgO-FeO-Fe2O3-Al2O3-SiO2-TiO2-H2O-CO2,
+Journal of Petrology, Vol. 29, Part 2, pp. 445-522, 1988. 
+
+Note: This dataset is for solids minerals only. No liquid model is included.
+Also note that the solid minerals of the Berman & Brown 1984 and Berman 1983
+models (which _do_ include a liquid phase model) are not exactly the same as
+those here. So before one uses the liquid model of BB84 or B83 with the B88
+minerals, one should slightly rescale them.
+
+Note: This database is also used for the Ghiorso & Sack 1995 model, as well
+as other models in the literature.
+
+2026-03-15

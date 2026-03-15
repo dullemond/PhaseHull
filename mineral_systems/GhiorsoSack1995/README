@@ -1,0 +1,27 @@
+This is an implementation of the model of Ghiorso, M. S. & Sack, R. O. 1995,
+Contributions to Mineralogy and Petrology, 119, 197. This model stands at the
+basis of the MELTS code https://gitlab.com/ENKI-portal/ThermoEngine.git . The
+present implementation follows the description by Ghiorso & Sack 1995. But to
+ensure that the formulas are correctly implemented, the formulas in the
+model_GhiorsoSack1995.py are copies from the equivalent formulas from the
+LiquidMelts*.m files of the MELTS code.
+
+The MELTS code itself has some updates and changes compared to the original GS95
+model. In particular, several new components were added. They are included in
+the liquid model here. The MELTS code also has updated mineral data (compared to
+the original Ghiorso & Sack 1995 paper), which are _not_ included in the public
+version of PhaseHull, but can be obtained upon request to the author (CPD).
+
+The MELTS code also has numerous solid solutions implemented, which are _not_
+included in the PhaseHull implementation yet. They may be implemented in the
+future, but then they will not be in the public version of PhaseHull, but may
+be obtained upon request to the author (CPD).
+
+Another important difference is the implementation of H2O, which should not
+be used (so far) as it is not properly implemented yet.
+
+So please use this implementation of the Ghiorso & Sack model with care, as it
+is not guaranteed to properly match the MELTS code. It is, if anything, a
+highly simplified "MELTS-lite" implementation.
+
+2026-03-15
