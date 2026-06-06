@@ -329,7 +329,7 @@ def plot_ternary(phull,order=[0,1,2],stride=4,compnames=None,ax=None,limits=None
             for itie in range(len(xt[stype][igroup])):
                 x = phull.complete_x(xt[stype][igroup][itie])
                 if coordtrans is not None: x = coordtrans(x)
-                ax.plot([x[0,order[0]],x[1,order[0]]],[x[0,order[1]],x[1,order[1]]],[x[0,order[2]],x[1,order[2]]],color=linecolors['tieline_c1l2'],marker='o',ms=2,linewidth=0.5)
+                ax.plot([x[0,order[0]],x[1,order[0]]],[x[0,order[1]],x[1,order[1]]],[x[0,order[2]],x[1,order[2]]],color=linecolors[stype],marker='o',ms=2,linewidth=0.5)
     # Plot the crystals
     db=phull.crystals[0].dbase
     db=db[db['stable']]

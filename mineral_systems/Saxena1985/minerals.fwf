@@ -1,0 +1,10 @@
+Name                Abbrev  Formula      Enthalpy   Entropy             a         bx1e2        cx1e-7             f 
+Orthoenstatite      oEn     Mg2Si2O6     -3092.58   132.540   3.77506e+02  -1.06630e+00   8.65000e-04  -3.62580e+03
+Clinoenstatite      cEn     Mg2Si2O6     -3088.02   134.450   3.77510e+02  -1.06630e+00   8.65000e-04  -3.62580e+03
+Diopside            cDi     CaMgSi2O6    -3201.82   143.094   2.21210e+02   3.28000e+00  -6.58600e-01   0.00000e+00
+Hedenbergite        cHd     CaFeSi2O6    -2838.82   170.290   2.29330e+02   3.42000e-02  -6.28000e-01   0.00000e+00
+Ferrosilite         oFs     Fe2Si2O6     -2389.02   189.120   2.66000e+02   0.00000e+00  -9.69400e-01   0.00000e+00
+Clinoferrosilite    cFs     Fe2Si2O6     -2387.18   190.796   2.66000e+02   0.00000e+00  -9.69400e-01   0.00000e+00
+Orthodiopside       oDi     CaMgSi2O6    -3182.08   143.080   2.21210e+02   3.28000e+00  -6.58600e-01   0.00000e+00
+Orthohedenbergite   oHd     CaFeSi2O6    -2833.56   169.758   2.29330e+02   3.42000e-02  -6.28000e-01   0.00000e+00
+DummyWollastonite   dummy   Ca2Si2O6            0         0             0             0             0             0

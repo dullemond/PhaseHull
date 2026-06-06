@@ -310,6 +310,23 @@ class SolidSolution(object):
                         the corresponding value of endfact to 2. This signals the code
                         that the endmember formula unit is 2x MgSiO3 = Mg2Si2O6.
 
+                        A note on reciprocal solutions: Often the solid solution has
+                        endmembers that are not the endpoints of a simplex. Example:
+                        the pyroxene solid solution of Enstatite (Mg2Si2O6), Ferrosilite
+                        (Fe2Si2O6), Diopside (CaMgSi2O6), and Hedenbergite (CaFeSiO6)
+                        are part of the triangle (2D simplex) spanned by Enstatite --
+                        Ferrosilite -- Wollastonite (Ca2Si2O6). But Wollastonite is
+                        excluded from the solution, and so are all compositional points
+                        with more than 50% of Ca2Si2O6 endmember. The way it works here
+                        is that you still have to give Mg2Si2O6, Fe2Si2O6 and Ca2Si2O6
+                        as "endmembers", and the ensure that the grid only covers the
+                        valid part of the triangle. The "reciprocal" internal degree
+                        of freedom at a given composition is then something that you
+                        (the user) have to fix (so that at each grid point on the
+                        En-Fs-Di-Hd quadrilateral only has one unique value of G).
+                        Typically this "fixing" is done by finding the minimum G
+                        along this internal degree of freedom.
+
           Gfunc         The function that computes the Gibbs energy as a function of the
                         y coordinate within the solid solution. Must be a function Gfunc(y).
                         It should return the Gibbs energy per mole of endmember. In the
@@ -418,7 +435,7 @@ class PhaseHull(object):
     def __init__(self,components,crystals=None,liquids=None,solsols=None,T=None,P=None,nres0=30,nrefine=4,nfact=2,nspan=2, \
                  min_nr_tielines=2,nocompute=False,incl_ptnames=True,incl_xvals=True,incl_Gvals=True,        \
                  incl_Gcen=False,incl_xcen=False,incl_xtie=False,mrcrit=10.,refinepoints=None,xgrid=None,
-                 factors=None,epsequ=1e-18):
+                 factors=None,epsequ=1e-18,verbose=False):
         """
         Arguments:
 
@@ -568,6 +585,7 @@ class PhaseHull(object):
           tested. Not sure if all simplex types are complete for higher order
           systems. This may need some additional work.
         """
+        self.verbose      = verbose
         self.epsequ       = epsequ
         self.mrcrit       = mrcrit
         self.components   = components
@@ -655,7 +673,8 @@ class PhaseHull(object):
         self.incl_xtie    = incl_xtie
         self.refinepoints = refinepoints
         self.tieline_types= ['tieline_c0l2','tieline_c0l3','tieline_c1l2','tieline_c1l3',\
-                             'tieline_c1l0s2','tieline_c0l0s3','tieline_c0l1s2','tieline_c0l2s1']
+                             'tieline_c1l0s2','tieline_c0l0s3','tieline_c0l1s2','tieline_c0l2s1',\
+                             'solsol_coexist','solsol_inmisc']
                             # Not possible should be 'tieline_c1l1s1', 'tieline_c2l0s1',
 
         # Wrap up
@@ -1602,6 +1621,7 @@ class PhaseHull(object):
               better. The solid solution must then exist for all x points in the
               system. 
         """
+        if self.verbose: print('Starting Computation at base grid level...')
 
         # For each level of refinement, all data is stored in self.the<something>.
         # To get the highest-resolution data, always choose self.the<something>[-1]
@@ -1773,6 +1793,7 @@ class PhaseHull(object):
                           refinement, ['nspan'] is the span of the refinement,
                           ['niter'] is the nr of recursive refinements.
         """
+        if self.verbose: print('Starting Computation at this refinement level...')
         assert len(self.liquids)>0, 'Error: No refinement necessary if no liquids/alloys/glasses available'
         assert len(self.thepoints)==len(self.thesimplices), f'First call do_convex_hull_algorithm({len(self.thepoints)-1})'
         igrid     = len(self.gridsnres)
@@ -1929,7 +1950,9 @@ class PhaseHull(object):
               hull.neighbors refer to hull.simplice instead.
         """
         points    = np.stack(pts)
+        if self.verbose: print('Starting ConvexHull...')
         hull      = ConvexHull(points)
+        if self.verbose: print('Done with ConvexHull...')
         include   = hull.equations[:,-2]<-self.epsequ
         simplices = hull.simplices[include,:]
         equations = hull.equations[include,:]
@@ -2119,7 +2142,7 @@ class PhaseHull(object):
                         if mr is not None and self.ncomponents==3:
                             if mr>mrcrit:                        # In a ternary one can also have inmiscibility of three compositions.
                                 stype = 'inmisc_liquids_3phase'  # This is a bit tricky to find: we use the shape of the simplex.
-                        # Check if this simplex connects different liquids (if you have more than 1 continuum)
+                        # Check if this simplex connects different 'liquids' (if you have more than 1 continuum)
                         if len(set(names))>1:
                             stype += '_crossliq'
                     else:
@@ -2538,15 +2561,25 @@ class PhaseHull(object):
         icomponents   = np.zeros(len(components),dtype=int)
         DfGcomponents = np.zeros(len(components))+1e90
         for k,e in enumerate(components):
-            ms = mdb[mdb['Formula']==e]
-            assert(len(ms)>0), f'Error: Could not find component mineral {e} among minerals'
             DfG  = 1e90
             iend = -1
-            for i,row in ms.iterrows():
-                if(row['DfG']<DfG):
-                    iend = i
-                    DfG  = row['DfG']
-            assert i>-1, f'Error: Could not find component mineral {e} among minerals (stranger version)'
+            ms = mdb[mdb['Formula']==e]
+            if len(ms)>0:
+                for i,row in ms.iterrows():
+                    if(row['DfG']<DfG):
+                        iend = i
+                        DfG  = row['DfG']
+                assert i>-1, f'Error: Could not find component mineral {e} among minerals (stranger version)'
+            else:
+                x    = np.zeros(len(components))
+                x[k] = 1.
+                for i,row in mdb.iterrows():
+                    xrow = row['x']
+                    if(np.all(x==xrow)):
+                        if(row['mfDfG']<DfG):
+                            iend = i
+                            DfG  = row['mfDfG']
+                assert i>-1, f'Error: Could not find component mineral {e} among minerals (stranger version)'
             icomponents[k]   = iend
             DfGcomponents[k] = DfG
         return icomponents,DfGcomponents
@@ -2958,7 +2991,7 @@ class PhaseHull(object):
 
         Optional:
         
-          nx         The nr of points of the 1D 'drill. Default=100.
+          nx         The nr of points of the 1D 'drill'. Default=100.
 
         Returns:
 
@@ -2975,10 +3008,22 @@ class PhaseHull(object):
         bigY,simid = self.find_composition_for_given_x(x,ilevel=-1,return_simid=True)
         return s,x,bigY,simid
 
-    def map_phase_diagram(self,nres=100,ilevel=-1,colormap=None):
+    def map_phase_diagram(self,nres=100,ilevel=-1,colormap=None,xcorners=None):
+        if xcorners is not None:
+            ncorners    = len(xcorners)
+            assert ncorners<=self.ncomponents, 'Error: Cannot have more corners than components'
+        else:
+            ncorners    = self.ncomponents
+        xxgrid          = make_x_grid(nres,ncorners)
+        if xcorners is not None:
+            x           = np.zeros((len(xxgrid),self.ncomponents))
+            for i in range(len(xcorners)):
+                x      += xxgrid[:,i][:,None]*xcorners[i][None,:]
+        else:
+            x           = xxgrid
         simplices       = self.thesimplices[ilevel]
         answer          = {}
-        answer['x']     = make_x_grid(nres,self.ncomponents)
+        answer['x']     = x
         answer['isim']  = self.find_simplex_for_given_x(answer['x'])
         answer['stype'] = []
         if colormap is not None:
@@ -2992,7 +3037,10 @@ class PhaseHull(object):
                 else:
                     color = np.nan
                 answer['color'].append(color)
-        return answer
+        if xcorners is not None:
+            return xxgrid,answer
+        else:
+            return answer
 
 #---------------------------------------------------------------------------
 # Some functions used in the above classes
@@ -3024,6 +3072,23 @@ def make_integer_grid(nres,ncomponents):
                     if ix0>=0 and ix1>=0 and ix2>=0 and ix0+ix1+ix2<=nres:
                         k = nres - ix0 - ix1 - ix2
                         ixgrid.add((ix0,ix1,ix2,k))
+    elif ncomponents==5:
+        for ix0 in range(0,nres+1):
+            for ix1 in range(0,nres+1):
+                for ix2 in range(0,nres+1):
+                    for ix3 in range(0,nres+1):
+                        if ix0>=0 and ix1>=0 and ix2>=0 and ix3>=0 and ix0+ix1+ix2+ix3<=nres:
+                            k = nres - ix0 - ix1 - ix2 - ix3
+                            ixgrid.add((ix0,ix1,ix2,ix3,k))
+    elif ncomponents==6:
+        for ix0 in range(0,nres+1):
+            for ix1 in range(0,nres+1):
+                for ix2 in range(0,nres+1):
+                    for ix3 in range(0,nres+1):
+                        for ix4 in range(0,nres+1):
+                            if ix0>=0 and ix1>=0 and ix2>=0 and ix3>=0 and ix4>=0 and ix0+ix1+ix2+ix3+ix4<=nres:
+                                k = nres - ix0 - ix1 - ix2 - ix3 - ix4
+                                ixgrid.add((ix0,ix1,ix2,ix3,ix4,k))
     else:
         raise ValueError(f'Unfortunately at the moment we cannot handle nr of components = {ncomponents}')
     ixgrid = list(ixgrid)

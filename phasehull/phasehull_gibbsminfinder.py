@@ -11,7 +11,7 @@
 # It finds the coexisting phases and their mole fractions for a
 # given (single) bulk composition. Advantages (compared to the convex
 # hull algorithm): allows larger systems (more system components),
-# allows multi-phase mixtures with many more subphases than the
+# allows speciated solutions with many more species than the
 # number of system components (most typical example: an ideal gas
 # phase with numerous gaseous molecule species), and it is ideal
 # for use in a simulation. Disadvantages (compared to the convex
@@ -27,8 +27,8 @@ from phasehull.phasehull_subsystem import *
 
 class GibbsMinFinder(object):
     def __init__(self,components,T,P=1.,crystaldb=None,liquids=None,
-                 multiphasesolutions=None,eps=1e-8,tol=1e-8,maxiter=100,
-                 nrtrymax=4,fullname=False,factors=None):
+                 specsols=None,eps=1e-8,tol=1e-8,maxiter=100,
+                 nrtrymax=4,fullname=False,factors=None,Yoffset0=1.):
         """
         This module is a classic Gibbs minimization tool, not related to
         the convex hull algorithm. It works in Y-space which has an Y_k for
@@ -113,7 +113,7 @@ class GibbsMinFinder(object):
 
         To use it you must prepare an instance of phasehull.CrystalDatabase
         and/or one or more instances of phasehull.Liquid and/or one or
-        more instances of MultiPhaseSolution (see below). For the Liquids
+        more instances of SpeciatedSolution (see below). For the Liquids
         you must ensure to include a gammafunc() function, which should be
         a function that returns the activity coefficient vector gamma_i.
         This should be an exact function (do not use a numerical derivative
@@ -130,7 +130,7 @@ class GibbsMinFinder(object):
           P              Pressure in [bar]
           crystaldb      Instance of phasehull.CrystalDatabase
           liquids        List of instances of phasehull.Liquid
-          multipsols     List of instances of MultiPhaseSolution
+          specsols       List of instances of SpeciatedSolution
 
         Optional:
 
@@ -151,6 +151,9 @@ class GibbsMinFinder(object):
                          for when a component is, e.g., MnSi0.5O2 instead of
                          Mn2SiO4 (the component would then be Mn2SiO4 with a
                          factor of 0.5).
+          Yoffset0       Normally this is 1. This means that the SciPy
+                         minimizer sees the Y values as 1+Y, so that for
+                         Y->0 the errors don't appear to become very big.
         
         Once this is set up, e.g. using
 
@@ -173,14 +176,15 @@ class GibbsMinFinder(object):
 
         A note on miscibility gaps:
         If a miscibility gap occurs in the liquid (or in the future perhaps
-        also in the MultiPhaseSolution case) due to strong interaction terms
+        also in the SpeciatedSolution case) due to strong interaction terms
         between the components (of the liquid) or subphases (of a
-        MultiPhaseSolution), then miscibility gaps can occur. These would
-        split the liquid phase (or MultiPhaseSolution case) into two or more
+        SpeciatedSolution), then miscibility gaps can occur. These would
+        split the liquid phase (or SpeciatedSolution case) into two or more
         coexisting phases. In the current setup of GibbsMinFinder() this is
         not possible, so instead the mean phase (of that solution) will be
         picked by the solver instead of the two or more split phases.
         """
+        self.Yoffset0   = Yoffset0
         self.T          = T
         self.P          = P
         self.eps        = eps
@@ -196,9 +200,9 @@ class GibbsMinFinder(object):
         self.ncomp      = len(components)
         self.ncryst     = 0
         self.nliq       = 0
-        self.nmps       = 0
+        self.nsps       = 0
         self.nmphases   = 0
-        self.imps       = []
+        self.isps       = []
 
         # Add the crystals to GibbsMinFinder
         if crystaldb is not None:
@@ -231,21 +235,21 @@ class GibbsMinFinder(object):
                     if lq.factors is not None and self.factors is not None:
                         assert np.all(np.array(factors)==np.array(lq.factors)), 'Error: The factors of the components of the liquid are unequal to those of GibbsMinFinder'
 
-        # Add the multi-phase solutions to GibbsMinFinder
-        if multiphasesolutions is not None:
-            self.multips = multiphasesolutions
-            self.nmps    = len(multiphasesolutions)
-            imps         = self.ncryst + self.nliq*self.ncomp
-            for iph,mps in enumerate(multiphasesolutions):
-                self.imps.append(imps)
-                nrphases = len(mps.dbase)
-                self.nmphases += nrphases
-                imps          += nrphases
-            self.imps.append(imps)
+        # Add the speciated solutions to GibbsMinFinder
+        if specsols is not None:
+            self.specsols = specsols
+            self.nsps     = len(specsols)
+            isps          = self.ncryst + self.nliq*self.ncomp
+            for iph,sps in enumerate(specsols):
+                self.isps.append(isps)
+                nrspecies = len(sps.dbase)
+                self.nmphases += nrspecies
+                isps          += nrspecies
+            self.isps.append(isps)
 
         # Compute the total number of possible phases + phase components
         self.nphases = self.ncryst + self.nliq*self.ncomp + self.nmphases
-        assert self.nphases>0, 'Error: Must have at least crystaldb or liquids or MultiPhaseSolutions'
+        assert self.nphases>0, 'Error: Must have at least crystaldb or liquids or specsols'
 
         # Prepare information (such as name, formula, mass etc) for each element of Y
         self.make_phase_name_list_for_Y_vector(fullname=fullname)
@@ -330,7 +334,7 @@ class GibbsMinFinder(object):
         assert len(Yinit) == self.nphases, 'Error: Yinit does not have the correct number of elements.'
         if consY:
             # One of the constraints will be on Y, the others on the composition
-            cons = [{'type': 'eq', 'fun': lambda Y_offset: (Y_offset-1).sum()-1}]
+            cons = [{'type': 'eq', 'fun': lambda Y_offset: (Y_offset-self.Yoffset0).sum()-1}]
             for k in range(self.ncomp-1):
                 compos = partial(self.Composition,icomp=k)
                 cons.append({'type': 'eq', 'fun': compos})
@@ -342,7 +346,7 @@ class GibbsMinFinder(object):
                 cons.append({'type': 'eq', 'fun': compos})
         bounds = []
         for i in range(self.nphases):
-            bounds.append((1.,2.))
+            bounds.append((self.Yoffset0,self.Yoffset0+1))
         bounds  = tuple(bounds)
         self.cons   = cons
         self.bounds = bounds
@@ -350,10 +354,10 @@ class GibbsMinFinder(object):
         G       = lambda Yoff: self.GibbsEnergy(Yoff)
         J       = lambda Yoff: self.Jacobian(Yoff)
         H       = lambda Yoff: self.Hessian(Yoff)
-        Yoff    = Yinit + 1
+        Yoff    = Yinit + self.Yoffset0
         res     = minimize(G,Yoff,method=method,bounds=bounds,constraints=cons,jac=J,hess=H,
                            tol=self.tol,options=options)
-        Ymin    = res.x-1
+        Ymin    = res.x-self.Yoffset0
         errbottom = -Ymin.min()
         if errbottom<0: errbottom=0
         if errbottom>1e-4 or not res['success']:
@@ -364,11 +368,11 @@ class GibbsMinFinder(object):
                 Yinit = Ymin.copy()
                 Yoff = Ymin.copy()
                 Yoff[Yoff<0]=0.
-                Yoff += 1
+                Yoff += self.Yoffset0
                 res = minimize(G,Yoff,method=method,bounds=bounds,constraints=cons,jac=J,hess=H,
                                tol=self.tol,options=options)
                 if res['success']:
-                    Ymin    = res.x-1
+                    Ymin    = res.x-self.Yoffset0
                     errbottom = -Ymin.min()
                     if errbottom<0: errbottom=0
                     if errbottom>1e-4:
@@ -393,6 +397,14 @@ class GibbsMinFinder(object):
             return Ymin,res
         else:
             return Ymin
+
+    def convert_Y_array_into_dict(self,Y):
+        if not hasattr(self,'Y_phase_abbrev'):
+            self.make_phase_name_list_for_Y_vector()
+        Ydict = {}
+        for i,yrow in enumerate(Y):
+            Ydict[self.Y_phase_abbrev[i]] = yrow
+        return Ydict
 
     def get_interpretation_of_Y(self,Y,ythreshold=0.0):
         """
@@ -478,10 +490,10 @@ class GibbsMinFinder(object):
                            'Xsys':     Xsys,
                            'PhaseComponents':phscs}
                     phases.append(phs)
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                iy0  = self.imps[imps]
-                iy1  = self.imps[imps+1]
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                iy0  = self.isps[isps]
+                iy1  = self.isps[isps+1]
                 ny   = iy1-iy0
                 ym   = Y[iy0:iy1].copy()
                 if ym.sum()>ythreshold:
@@ -495,8 +507,8 @@ class GibbsMinFinder(object):
                     phscs  = []
                     Xsys   = np.zeros(self.ncomp)
                     for i in range(ny):
-                        if 'x' in mps.dbase.columns:
-                            xps   = mps.dbase[mps.dbase['Abbrev']==self.Y_phase_abbrev[iy0+i]].iloc[0]['x']
+                        if 'x' in sps.dbase.columns:
+                            xps   = sps.dbase[sps.dbase['Abbrev']==self.Y_phase_abbrev[iy0+i]].iloc[0]['x']
                             Xsys += xps * Y[iy0+i]/ysumph
                         if ym[i]>ythreshold:
                             phsc = {'Name':            self.Y_phase_name[iy0+i],
@@ -511,7 +523,7 @@ class GibbsMinFinder(object):
                                     'MassFrac':        Ymfrac[iy0+i],
                                     'MassFracInPhase': Ym[iy0+i]/mtotph,
                                     'ActivCoef':       gamma[iy0+i],
-                                    'Activity':        gamma[iy0+i]*Y[ilq0+i],
+                                    'Activity':        gamma[iy0+i]*Y[iy0+i],
                                     'ActivityInPhase': gamma[iy0+i]*Y[iy0+i]/ytotph,
                                     'ChemPotMol':      mu[i]*self.Y_phase_scale[i],
                                     'ChemPotMass':     mu[i]*self.Y_phase_scale[i]/self.Y_phase_molmass[i],
@@ -523,7 +535,7 @@ class GibbsMinFinder(object):
                            'Mass':     mtotph*self.quantity,
                            'MassFrac': mtotph/mtot,
                            'PhaseComponents':phscs}
-                    if 'x' in mps.dbase.columns:
+                    if 'x' in sps.dbase.columns:
                         phs['Xsys'] = Xsys
                     phases.append(phs)
         return phases
@@ -559,16 +571,16 @@ class GibbsMinFinder(object):
                 yl[yl<0]=0
                 #yl[yl>1]=1      # Do not limit <=1 to allow derivative outside ym.sum()==1
                 G   += self.LiquidGfunc(liq,yl)
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                iy0  = self.imps[imps]
-                iy1  = self.imps[imps+1]
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                iy0  = self.isps[isps]
+                iy1  = self.isps[isps+1]
                 ym   = Y[iy0:iy1].copy()
                 ym[ym<0]=0
                 #ym[ym>1]=1      # Do not limit <=1 to allow derivative outside ym.sum()==1
                 ysum = ym.sum()
                 ym  /= (ysum+1e-90)
-                G   += mps.call_Gfunc(ym) * ysum
+                G   += sps.call_Gfunc(ym) * ysum
         if np.isnan(G): breakpoint()
         return G
 
@@ -581,7 +593,7 @@ class GibbsMinFinder(object):
         RT          = self.Rgas*self.T
         dG          = np.zeros(len(Y))
         if self.ncryst>0:
-            ys          = Y[:self.ncryst]
+            #ys          = Y[:self.ncryst]
             dG[:self.ncryst] = self.Gsol
         if self.nliq>0:
             for iliq,liq in enumerate(self.liquids):
@@ -593,12 +605,12 @@ class GibbsMinFinder(object):
                 if ylsum>1e-40:
                     ylrel = yl/(ylsum+1e-90)
                     dG[ilq0:ilq0+self.ncomp] = liq.mu0 + RT*np.log(ylrel+1e-90) + RT*np.log(liq.gammafunc(ylrel))
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                iy0         = self.imps[imps]
-                iy1         = self.imps[imps+1]
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                iy0         = self.isps[isps]
+                iy1         = self.isps[isps+1]
                 ym          = Y[iy0:iy1].copy()
-                dG[iy0:iy1] = mps.dGdY(ym)
+                dG[iy0:iy1] = sps.dGdY(ym)
         return dG
 
     def d2GdY2_num(self,Y):
@@ -621,8 +633,8 @@ class GibbsMinFinder(object):
         """
         The activity coefficients of the phase components. For the fixed-composition
         crystals they are always 1, for the liquids they follow from the gammafunc()
-        functions that have to be provided in the Liquid class. For the MultiPhaseSolution
-        phases they are 1 if the solution is ideal, otherwise: see MultiPhaseSolution
+        functions that have to be provided in the Liquid class. For the SpeciatedSolution
+        phases they are 1 if the solution is ideal, otherwise: see SpeciatedSolution
         class.
         """
         gam        = np.zeros(len(Y))
@@ -638,24 +650,24 @@ class GibbsMinFinder(object):
                 if ylsum>1e-40:
                     ylrel = yl/(ylsum+1e-90)
                     gam[ilq0:ilq0+self.ncomp] = liq.gammafunc(ylrel)
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                iy0         = self.imps[imps]
-                iy1         = self.imps[imps+1]
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                iy0         = self.isps[isps]
+                iy1         = self.isps[isps+1]
                 ym          = Y[iy0:iy1].copy()
-                gam[iy0:iy1] = mps.gamma(ym)
+                gam[iy0:iy1] = sps.gamma(ym)
         return gam
 
     def GibbsEnergy(self,Y_offset):
-        Y = Y_offset - 1
+        Y = Y_offset - self.Yoffset0
         return self.Gfunc(Y)
     
     def Jacobian(self,Y_offset):
-        Y = Y_offset - 1
+        Y = Y_offset - self.Yoffset0
         return self.dGdY(Y)
 
     def Hessian(self,Y_offset):
-        Y = Y_offset - 1
+        Y = Y_offset - self.Yoffset0
         return self.d2GdY2_num(Y)
 
     def Composition(self,Y_offset,icomp=9999):
@@ -665,7 +677,7 @@ class GibbsMinFinder(object):
         equals the bulk molar fraction (bulk composition).
         """
         if hasattr(self,'debug') or icomp==9999: breakpoint()
-        Y  = Y_offset - 1
+        Y  = Y_offset - self.Yoffset0
         xcomp = 0.
         if self.ncryst>0:
             xcomp += (Y[:self.ncryst]*self.xsol[:,icomp]).sum()
@@ -673,11 +685,11 @@ class GibbsMinFinder(object):
             for iliq,liq in enumerate(self.liquids):
                 ilq0   = self.ncryst+iliq*self.ncomp
                 xcomp += Y[ilq0+icomp]
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                iy0    = self.imps[imps]
-                iy1    = self.imps[imps+1]
-                xcomp += (Y[iy0:iy1]*np.stack(mps.dbase['x'])[:,icomp]).sum(axis=0)
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                iy0    = self.isps[isps]
+                iy1    = self.isps[isps+1]
+                xcomp += (Y[iy0:iy1]*np.stack(sps.dbase['x'])[:,icomp]).sum(axis=0)
         return xcomp - self.xbulk[icomp]
 
     def do_reset_if_necessary(self,T=None,P=None):
@@ -697,9 +709,9 @@ class GibbsMinFinder(object):
                 for liq in self.liquids:
                     liq.reset(self.T,self.P)
                     self.compute_liquid_mu0(liq)
-            if hasattr(self,'multips'):
-                for mps in self.multips:
-                    mps.reset(self.T,self.P)
+            if hasattr(self,'specsols'):
+                for sps in self.specsols:
+                    sps.reset(self.T,self.P)
 
     def compute_liquid_mu0(self,liq):
         assert len(liq.components)==self.ncomp, 'Error: Nr of components of liquid incorrect'
@@ -735,16 +747,16 @@ class GibbsMinFinder(object):
                 yl[yl<0]=0
                 if yl.sum()>ythreshold:
                     Gi[liq.name] = self.LiquidGfunc(liq,yl)
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                iy0  = self.imps[imps]
-                iy1  = self.imps[imps+1]
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                iy0  = self.isps[isps]
+                iy1  = self.isps[isps+1]
                 ym   = Y[iy0:iy1].copy()
                 ym[ym<0]=0
                 #ym[ym>1]=1      # Do not limit <=1 to allow derivative outside ym.sum()==1
                 ysum = ym.sum()
                 ym  /= (ysum+1e-90)
-                Gi[mps.name] = mps.call_Gfunc(ym) * ysum
+                Gi[sps.name] = sps.call_Gfunc(ym) * ysum
         return Gi
 
     def get_total_enthalpy(self,Y):
@@ -761,9 +773,9 @@ class GibbsMinFinder(object):
         if self.nliq>0:
             for iliq,liq in enumerate(self.liquids):
                 assert liq.Hfunc is not None, 'Error in get_total_enthalpy: Liquid class does not have function Hfunc().'
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                assert 'DfH' in mps.dbase.columns, 'Error in get_total_enthalpy: DfH column not in MultiPhaseSolution database.'
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                assert 'DfH' in sps.dbase.columns, 'Error in get_total_enthalpy: DfH column not in SpeciatedSolution database.'
         H = 0.
         if self.ncryst>0:
             ys    = Y[:self.ncryst]
@@ -775,11 +787,11 @@ class GibbsMinFinder(object):
                 yl   = Y[ilq0:ilq0+self.ncomp].copy()
                 yl[yl<0]=0
                 H   += liq.Hfunc(np.stack([yl]))[0]
-        if self.nmps>0:
-            raise ValueError('For now, get_total_enthalpy does not work for MultiPhaseSolution class.')
+        if self.nsps>0:
+            raise ValueError('For now, get_total_enthalpy does not work for SpeciatedSolution class.')
         if np.isnan(H): breakpoint()
-        return H
-        
+        return H 
+       
     def make_phase_name_list_for_Y_vector(self,fullname=False):
         # Create the list of component names, so that the resulting Y
         # vector is easier to interpret.
@@ -823,51 +835,94 @@ class GibbsMinFinder(object):
                     self.Y_phase_factor.append(factor)
                     mol,mass,charge = dissect_molecule(self.components[icomp])
                     self.Y_phase_molmass.append(mass*factor)
-        if self.nmps>0:
-            for imps,mps in enumerate(self.multips):
-                name = mps.name
+        if self.nsps>0:
+            for isps,sps in enumerate(self.specsols):
+                name = sps.name
                 if len(name)>0 and name[-1]!='_': name=name+'_'
-                species = np.array(mps.dbase['Formula'])
-                for iphase in range(mps.nsubphases):
+                species = np.array(sps.dbase['Formula'])
+                for ispecies in range(sps.nspecies):
                     self.Y_phase_phase.append(name)
-                    self.Y_phase_name.append(name+species[iphase])
-                    self.Y_phase_abbrev.append(name+species[iphase])
-                    self.Y_phase_formula.append(species[iphase])
-                    self.Y_phase_scale.append(mps.dbase['moles'].iloc[iphase])
-                    if 'Factor' in mps.dbase.columns:
+                    self.Y_phase_name.append(name+species[ispecies])
+                    self.Y_phase_abbrev.append(name+species[ispecies])
+                    self.Y_phase_formula.append(species[ispecies])
+                    self.Y_phase_scale.append(sps.dbase['moles'].iloc[ispecies])
+                    if 'Factor' in sps.dbase.columns:
                         # Note that this factor must already be included in moles above
-                        factor = mps.dbase['Factor'].iloc[iphase]
+                        factor = sps.dbase['Factor'].iloc[ispecies]
                     else:
                         factor = 1.0
                     self.Y_phase_factor.append(factor)
-                    mol,mass,charge = dissect_molecule(species[iphase])
+                    mol,mass,charge = dissect_molecule(species[ispecies])
                     self.Y_phase_molmass.append(mass*factor)
 
 
-class MultiPhaseSolution(object):
+class SpeciatedSolution(object):
     """
-    As opposed to the convex hull algorithm, the Gibbs Minimizer algorithm 
-    can involve an arbitrary set of phases that can be mixed (for now only
-    ideal mixing). For instance, if you evaporate H2O, you have H2O vapor,
-    but at very high temperatures, there can also be H2 gas, O2 gas, atomic H
-    gas, etc. So even though you have formally only 1 system component (H2O)
-    the gas phase can contain many different molecular species. Another
-    example is Hastie & Bonnell's (1985) model of magma (as implemented in
-    the code MAGMA by Fegley and Cameron (1987), as an ideal solution of
-    not just the few system components, but an extensive list of pseudospecies
-    (many more than the number of system components). These kinds of multi-
-    phase (as in more than ncomp phases) solutions cannot be modelled by
-    the convex hull algorithm (unless you go through the trouble of computing
-    for each x, the most energetically favorable combination of phases for
-    the "mixed-phase phase", but that almost defeats the purpose), but can
-    be easily included in a Gibbs Minimizer algorithm.
+    In most of the PhaseHull software, a substance is uniquely specified by
+    its composition (mole fraction x) in terms of the system components.
+    For the phase diagrams this must be the case, otherwise no phase
+    diagrams can be made.
 
-    To facilitate this, the MultiPhaseSolution class allows you to specify
-    a list of phases with their thermodynamic properties, very similar to
+    However, in many applications there are internal degrees of freedom
+    that go beyond just the mole fractions x. The simplest example is a
+    vapor. For instance, if you evaporate H2O, you have H2O vapor, but at 
+    very high temperatures, there can also be H2 gas, O2 gas, atomic H
+    gas, etc. So even though you have formally only 1 system component (H2O)
+    the gas phase can contain many different molecular species. A similar
+    thing happens when a substance is dissolved in water. The molecules
+    are far enough from each other that the form an ideal solution.
+
+    Another example is Hastie & Bonnell's (1985) model of magma (as implemented
+    in the code MAGMA by Fegley and Cameron (1987), as an ideal solution of
+    not just the few system components, but an extensive list of pseudospecies
+    (many more than the number of system components).
+
+    Yet another example is the non-ideal solid solution of the pyroxene
+    quadrilateral. This lives on the ternary of enstatite (Mg2Si2O6) --
+    ferrosilite (Fe2Si2O6) --  wollastonite (Ca2Si2O6), but only in the
+    part for which less or equal than 0.5 mole fraction is wollastonite.
+    This is because, "under the hood", this is, in fact, a solution of
+    four species: enstatite (Mg2Si2O6), ferrosilite (Fe2Si2O6), diopside
+    (CaMgSi2O6) and hedenbergite (CaFeSi2O6). In contrast to the previous
+    two examples, this is not an ideal solution. It has excess Gibbs
+    terms. A good model is that of Saxena, Sykes & Eriksson (1986).
+    This is called a "reciprocal solid solution".
+
+    All of these examples are so-called "speciated solutions".
+    Finding the abundances of each of these species, for a given overall
+    system component abundance vector x, is called "speciation".
+
+    In most of the PhaseHull software, it is assumed that this speciation
+    is trivial: Each fixed-component phase is just one species, while the
+    species contained in a solution (liquid or solid) are assumed to be
+    the system components or phase components themselves.
+
+    However, as the examples above show, for many types of solutions this
+    may not be so easy. For instance, for the vapors, the internal
+    equilibrium chemistry of the gas will, for a fixed elemental composition
+    (i.e. the mole fractions of the system components) determine the mole
+    fractions of the various molecular species. These, in turn, form an
+    ideal solution, with the usual entropy contribution to the Gibbs free
+    energy. One *could* see this still as a *non-ideal* solution of the
+    system components, but that is somewhat artificial, and produces
+    strong excess Gibbs terms even if the species themselves mix ideally.
+    In reality the solution (from a statistical physics perspective) is
+    a mixture of the (many) molecular species.
+
+    The convex hull algorithm of PhaseHull just needs the Gibbs free
+    energy hatG as a function of the mole fraction x of the components.
+    It does not care about the internal degrees of freedom (i.e., the
+    abundances of the species making up the solution). So to provide
+    this hatG value for given x for a non-trivial solution, one should 
+    "speciate" the solution, for the given x mole fraction vector, and 
+    based on the abundances of the species, compute the hatG value.
+
+    To facilitate this, the SpeciatedSolution class allows you to specify
+    a list of species with their thermodynamic properties, very similar to
     the CrystalDatabase class of PhaseHull (see phasehull.py). But in
-    contrast to the minerals of a CrystalDatabase object, the phases are
+    contrast to the minerals of a CrystalDatabase object, the species are
     now mixed at the molecular level, so that the Gibbs free energy gets
-    an R*T*y_k*log(y_k) term of entropy for each phase k.
+    an R*T*y_k*log(y_k) term of entropy for each species k.
 
     At the moment only the entropy of mixing is included, not any potential
     interaction terms. At some later point, interaction terms could be
@@ -876,30 +931,30 @@ class MultiPhaseSolution(object):
 
     A note on the meaning of y:
     The capital letter Y is used in GibbsMinFinder as the mole fractions
-    Y[0:nphases] of all the phases and "subphases" (in the case of liquids
-    or MultiPhaseSolution instances), all scaled to the formula units
-    equivalent to 1 mole of constitute system component. That means that
-    at all times, if you decompose all phases into their system components,
+    Y[0:nphases] of all the phases and species (in the case of liquids
+    or SpeciatedSolution instances), all scaled to the formula units
+    equivalent to 1 mole of constituting system component. That means that
+    at all times, if you decompose all species into their system components,
     and add up all the moles of these system components, you get 1.0.
-    An instance of the MultiPhaseSolution class is, physically, a single
-    phase, but consists of a multitude of "subphases" that form an
-    ideal solution. Within each instance of the MultiPhaseSolution class
-    the mole fractions of these subphases (relative to the total amount of
-    multiphasesolution) are called y (small letter), and sum up to
-    y.sum()==1. The "subphases" of a multiphasesolution each have their
+    An instance of the SpeciatedSolution class is, physically, a single
+    phase, but consists of a multitude of species that form an
+    ideal solution. Within each instance of the SpeciatedSolution class
+    the mole fractions of these species (relative to the total amount of
+    speciatedsolution) are called y (small letter), and sum up to
+    y.sum()==1. The species of a speciatedsolution each have their
     place in the big Y vector, say, starting from Y-vector-index imultstart,
-    we have Y[imultstart:imultstart+nsubphases] = Ysubphase*y[0:nsubphases],
-    where Ysubphase is the total amount of moles of multiphasesolution. So
-    both the total Y.sum()==1 and for each multiphasesolution y.sum()==1,
+    we have Y[imultstart:imultstart+nspecies] = Ysubphase*y[0:nspecies],
+    where Ysubphase is the total amount of moles of speciatedsolution. So
+    both the total Y.sum()==1 and for each speciatedsolution y.sum()==1,
     and the conversion between the two requires Ysubphase.
 
     A note on ideal gas mixtures:
-    The main application of the MultiPhaseSolution class is the gas phase.
+    The main application of the SpeciatedSolution class is the gas phase.
     In some formulations (e.g. Timmermann et al. 2023) the mu0 are defined
     at pressure 1 bar, even if the system pressure p is not (necessarily)
     1 bar. The way this is corrected for is to add an extra term to the
     entropy of mixing Gibbs free energie that is proportional to log(p/1bar).
-    Here, in MultiPhaseSolution (and in general in PhaseHull) the mu0
+    Here, in SpeciatedSolution (and in general in PhaseHull) the mu0
     values should be computed at the system pressure, in which case this
     extra term is not necessary (and not allowed).
     """
@@ -979,7 +1034,7 @@ class MultiPhaseSolution(object):
         if 'Factor' not in dbase.columns:
             dbase['Factor'] = 1.0
         self.dbase      = dbase
-        self.nsubphases = len(dbase)  # The number of phases to be mixed
+        self.nspecies   = len(dbase)  # The number of phases to be mixed
         self.components = components
         self.ncomp      = len(components)
         self.reset  = resetfunc
@@ -1006,7 +1061,7 @@ class MultiPhaseSolution(object):
         G     += RT * ( ys * np.log(np.abs(ys+1e-90)) ).sum(axis=-1)     # The entropy of mixing term
         G      = G * ratio                                               # Now scale back to Gibbs free energy per mole of constitute system component
         if self.debug:
-            print(f'MPS: y = {y}, G = {G}, ratio = {ratio}')
+            print(f'SPS: y = {y}, G = {G}, ratio = {ratio}')
         return G
 
     def dGdY(self,y):
@@ -1024,13 +1079,55 @@ class MultiPhaseSolution(object):
         if ysum>1e-40:
             mu0         = DfG * factor                                   # The mu0 of "actual molecule" to be mixed (factor*molecule of database)
             dG = ( mu0 + RT*np.log(ym+1e-90) ) / moles                   # The chemical potential of "actual molecule", backscaled such that it is again per mole of component
+
+            #### I THINK THIS / moles IS WRONG FOR THE LOG TERM, AND SHOULD ONLY BE FOR THE MU0 TERM ####
+
         else:
             dG = 0.0
         return dG
 
+
+    # ************* BELOW STILL IN PREP **************
+
+    
+    def d2GdY2(self,y):
+        Rgas   = 8.314  # J/mol·K
+        RT     = Rgas*self.T
+        ym     = y/y.sum(axis=-1)   # ** IF WE USE DIFFERENT COMPOSITION CONSTRAINT: SHOULD WE COMMENT THIS OUT? **
+        ym[ym<0]=0
+        ym[ym>1]=1   # ** CHECK: SHOULD WE COMMENT THIS OUT? **
+        moles  = np.stack(self.dbase['moles'])                           # How many moles of system component for 1 mole of this molecule*factor
+        DfG    = np.stack(self.dbase['DfG'])                             # Gibbs free energy per mole of system component
+        ym    /= moles                                                   # Scale ym to moles of "actual molecule" to be mixed (factor*molecule of database)
+        ysum   = ym.sum()                                                # Rescale to ym.sum()==1
+        ym    /= (ysum+1e-90)
+        ny     = len(ym)
+        if ysum>1e-40:
+
+
+
+            
+            d2G = np.zeros((ny,ny)) - RT / moles
+
+
+
+            
+            
+            for i in range(ny):
+                d2G[i,i] = RT / (ym[i]+1e-90) / moles
+
+
+
+
+
+                
+        else:
+            d2G = 0.0
+        return d2G
+
     def gamma(self,y):
         """
-        For now the MultiPhaseSolution is an ideal solution, so the
+        For now the SpeciatedSolution is an ideal solution, so the
         activity coefficients gamma_i must be 1.
         """
         return np.ones_like(y)
