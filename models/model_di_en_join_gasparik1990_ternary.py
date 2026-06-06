@@ -20,6 +20,9 @@ compnames   = components
 endmembers  = ['MgSiO3',  'CaMgSi2O6']  #  ['Enstatite','Diopside']
 endmfact    = [2.,        1.         ]
 
+linecolors['tieline_c1l0s2']          = 'C2';            fillcolors['tieline_c1l0s2']          = 'palegreen'
+linecolors['tieline_c0l2s1']          = 'C2';            fillcolors['tieline_c0l2s1']          = 'palegreen'
+
 #ny          = 401
 ny          = 101
 y1d         = np.linspace(0,1,ny)
