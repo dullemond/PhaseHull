@@ -91,7 +91,7 @@ class GibbsMinFinder(object):
         one can have a 4-2=2-dimensional space of possible Y vectors. Some
         example points in this space are [0.5,0.5,0.,0.] (separate SiO2 and
         MgO phases in ratio 1:1), or [0.,0.,1.,0] (only MgSiO3), or
-        [0.5,0.,0.,0.5] (separate SiO2 and Mg2SiO4).
+        [0.25,0.,0.,0.75] (separate SiO2 and Mg2SiO4).
 
         Important note about "scaling of phases":
         The amount of moles of all phases are counted with respect to
@@ -103,13 +103,16 @@ class GibbsMinFinder(object):
         scaled version of MgSiO3 is Mg(1/2)Si(1/2)O(3/2), because one
         mole of system components (in this case 0.5 mole of SiO2 and 0.5
         mole of MgO) creates 1 mole of Mg(1/2)Si(1/2)O(3/2). Likewise,
-        the case of Y=[0.5,0.,0.,0.5] contains 0.5 moles of scaled Mg2SiO4,
+        the case of Y=[0.25,0.,0.,0.75] contains 0.75 moles of scaled Mg2SiO4,
         where the scaled version of Mg2SiO4 is Mg(2/3)Si(1/3)O(4/3),
         because 2/3 mole of MgO and 1/3 mole of SiO2 together make up
         1/3 of Mg2SiO4. The scaling factor of each phase relative to 
         the system components is listed in the mineral database in the 
-        "moles" column, which is 2.0 for MgSiO3  and 3.0 for Mg2SiO4
-        in the system of (SiO2,MgO).
+        "moles" column: the number of moles of the listed formula unit
+        formed from 1 mole of system components, which is 0.5 for MgSiO3
+        and 1/3 for Mg2SiO4 in the system of (SiO2,MgO). So the true moles
+        of a phase are Y*moles (0.75*(1/3)=0.25 moles of Mg2SiO4 in the
+        above example).
 
         To use it you must prepare an instance of phasehull.CrystalDatabase
         and/or one or more instances of phasehull.Liquid and/or one or
@@ -298,9 +301,9 @@ class GibbsMinFinder(object):
           return_unscaled   (default=False) If True, then instead of returning the scaled Y,
                             which are the moles of the scaled phases (e.g. Mg(2/3)Si(1/3)O(4/3)
                             for Mg2SiO4 in the system of SiO2,MgO, or H(2/3)O(1/3) in the
-                            system of H and O), return instead the unscaled Y = Y / scale,
+                            system of H and O), return instead the unscaled Y = Y * moles,
                             meaning the true moles of Mg2SiO4 and H2O in the above examples
-                            (in both examples scale==3.0). In that case, though, Y.sum()!=1.
+                            (in both examples moles==1/3). In that case, though, Y.sum()!=1.
                             But the system remains normalized to 1 mole of constitute system
                             components.
         
@@ -803,7 +806,7 @@ class GibbsMinFinder(object):
         self.Y_phase_name    = []  # The name of the phase (or part of the phase) in Y
         self.Y_phase_abbrev  = []  # The abbreviation of the phases in Y
         self.Y_phase_formula = []  # The chemical formula
-        self.Y_phase_scale   = []  # The scaling (>=1) of each phase such that phase_scaled = phase / Y_scale, so nmoles_scaled = nmoles * Y_scale
+        self.Y_phase_scale   = []  # The scaling (=moles, usually <=1) of each phase such that phase_scaled = phase * Y_scale, so nmoles = nmoles_scaled * Y_scale
         self.Y_phase_factor  = []  # The factor to scale the nmoles of the phase before computing entropy of mixing
         self.Y_phase_molmass = []  # The mass (in units of gram) of 1 mole of this phase (factor*formula)
         if self.ncryst>0:
@@ -983,27 +986,28 @@ class SpeciatedSolution(object):
                          "moles"      How many moles you get if you mix 1 mole of system
                                       components according to x to get this phase.
                                       Example: system components [SiO2,MgO], phase
-                                      Mg2SiO4, then moles=3.0 and x=[(1/3),(2/3)].
+                                      Mg2SiO4, then moles=1/3 and x=[(1/3),(2/3)].
                          "DfG"        The Delta_f G or Delta_a G Gibbs energy of formation
-                         "mfDfG"      As DfG, but scaled to "per mole of system component"
+                         "mfDfG"      As DfG, but scaled to "per mole of system component",
+                                      i.e. mfDfG = DfG*moles
                        Other columns can be added for the reset function (see resetfunc below).
                        Typically the DfG is computed by the reset function for
                        a given T and P.
                        A further column can be added voluntarily (default is 1.0):
-                         "factor"     If 1.0, the formula unit to be used in the entropy
+                         "Factor"     If 1.0, the formula unit to be used in the entropy
                                       of mixing (the R*y*ln(y) term), is the one in the
                                       "Formula" column. If it is, for instance, 2.0, then
                                       it would be the twice more massive one. Example:
                                       if you have MgSiO3 in the "Formula" column, but
                                       the unit used for the entropy is Mg2Si2O6, then you
-                                      should set the number in the "factor" colum to 2.0.
+                                      should set the number in the "Factor" colum to 2.0.
                                       IMPORTANT: The "moles" column should be appropriately
                                                  adjusted. So with system components SiO2
-                                                 and MgO, without factor, moles=2.0 (1
-                                                 mole of SiO2 and 1 mole of MgO = 1 moles
-                                                 of MgSiO3), but with factor = 2.0, the
-                                                 moles=4.0 (2 moles of SiO2 and 2 mole of
-                                                 MgO = 1 moles of Mg2Si2O6).
+                                                 and MgO, without factor, moles=0.5 (0.5
+                                                 mole of SiO2 and 0.5 mole of MgO = 0.5
+                                                 moles of MgSiO3), but with Factor = 2.0,
+                                                 moles=0.25 (0.5 mole of SiO2 and 0.5 mole
+                                                 of MgO = 0.25 moles of Mg2Si2O6).
 
         Optional:
 

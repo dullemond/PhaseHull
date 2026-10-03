@@ -34,10 +34,11 @@ class CrystalDatabase(object):
     more natural formulae, such as MgSiO3. The 'dbase' table given as argument
     to CrystalDatabase (see below) must therefore contain information about how
     to scale from the listed mineral MgSiO3 to the required Mg(1/2)Si(1/2)O(3/2).
-    The column 'moles' should contain this multiplicity factor, which is 2 in the
-    example of MgSiO3 and 4 if the same mineral is listed as Mg2Si2O6 (of course
+    The column 'moles' should contain the number of moles of the listed formula
+    unit that is formed from 1 mole of system components, which is 0.5 in the
+    example of MgSiO3 and 0.25 if the same mineral is listed as Mg2Si2O6 (of course
     all assuming that the system components are SiO2 and MgO). The column 'mfDfG'
-    is then the scaled Gibbs free energy of formation, such that mfDfG=DfG/moles.
+    is then the scaled Gibbs free energy of formation, such that mfDfG=DfG*moles.
     """
     def __init__(self,dbase,resetfunc=None,resetdbfunc=None,components=None,factors=None):
         """
@@ -55,10 +56,10 @@ class CrystalDatabase(object):
                          "moles"      How many moles you get if you mix 1 mole of system
                                       components according to x to get this phase.
                                       Example: system components [SiO2,MgO], phase
-                                      Mg2SiO4, then moles=3.0 and x=[(1/3),(2/3)].
+                                      Mg2SiO4, then moles=1/3 and x=[(1/3),(2/3)].
                          "DfG"        The Delta_f G or Delta_a G Gibbs energy of formation
                          "mfDfG"      As DfG, but scaled to "per mole of system component",
-                                      i.e. mfDfG = DfG/moles.
+                                      i.e. mfDfG = DfG*moles.
                        Other columns can be added for the reset function (see resetfunc below).
                        Typically the DfG and mfDfG are computed by the reset function for
                        a given T and P.
