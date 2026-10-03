@@ -395,7 +395,14 @@ class GibbsMinFinder(object):
                 else:
                     raise ValueError('Repeated retries have not helped. Aborting.')
         if return_unscaled:
-            Ymin /= np.array(self.Y_phase_scale)
+            # Claude: deleted code here
+            # (old: Ymin /= np.array(self.Y_phase_scale))
+            # Claude: added code here (start)
+            # Y_phase_scale is the 'moles' column (moles of the listed formula unit per mole
+            # of system components, e.g. 1/3 for Mg2SiO4 in [SiO2,MgO]), so the true moles
+            # of each phase are Y*moles.
+            Ymin *= np.array(self.Y_phase_scale)
+            # Claude: added code here (end)
         if return_res:
             return Ymin,res
         else:
@@ -426,11 +433,36 @@ class GibbsMinFinder(object):
 
         Returns:
 
-          A dict with lots of information ;-)
+          A list of dicts (one per physical phase present) with lots of information ;-)
+          The main entries (per phase, or per phase component / species of a liquid
+          or SpeciatedSolution) are:
+
+            Moles          True moles of the listed formula unit (Formula, times Factor
+                           if present), i.e. Y*moles, times the total amount of system
+                           components (see xbulk in find_minimum()).
+            MoleFrac       As Moles, but per mole of system components (i.e. Y*moles).
+            MoleFracSys    The (scaled) Y value itself: moles of the scaled formula unit
+                           per mole of system components.
+            MoleFracInPhase  (solutions only) True mole fraction of this phase
+                           component / species within its phase.
+            Mass, MassFrac Mass [g] and mass fraction (of the whole system).
+            ActivCoef      Activity coefficient gamma (solutions only).
+            Activity, ActivityInPhase  gamma times MoleFrac, resp. MoleFracInPhase.
+            ChemPotMolSys  The chemical potential dG/dY [J per mole of the scaled
+                           formula unit, i.e. per mole of system components].
+            ChemPotMol     The chemical potential per mole of the listed formula unit
+                           [J/mol], i.e. ChemPotMolSys/moles. For a pure crystal this
+                           equals its DfG.
+            ChemPotMass    ChemPotMol per gram [J/g].
+
         """
         mu      = self.dGdY(Y)  # The chemical potential
         gamma   = self.gamma(Y) # The activity coefficient
-        Ytot    = Y/np.array(self.Y_phase_scale)
+        # Claude: deleted code here
+        # (old: Ytot    = Y/np.array(self.Y_phase_scale))
+        # Claude: added code here (start)
+        Ytot    = Y*np.array(self.Y_phase_scale)   # True moles of the listed formula units (Y*moles)
+        # Claude: added code here (end)
         Ymfrac,mtot = convert_mole_fraction_into_mass_fraction(self.Y_phase_formula,Ytot,return_also_mtot=True,factors=self.Y_phase_factor)
         Ym      = Ymfrac*mtot
         phases  = []   # The list of physical phases
@@ -449,8 +481,13 @@ class GibbsMinFinder(object):
                            'Mass':          Ym[i]*self.quantity,
                            'MassFrac':      Ymfrac[i],
                            'Xsys':          mdb[mdb['Abbrev']==self.Y_phase_abbrev[i]].iloc[0]['x'],
-                           'ChemPotMol':    mu[i]*self.Y_phase_scale[i],
-                           'ChemPotMass':   mu[i]*self.Y_phase_scale[i]/self.Y_phase_molmass[i],
+                           # Claude: deleted code here
+                           # (old: 'ChemPotMol':    mu[i]*self.Y_phase_scale[i],
+                           #       'ChemPotMass':   mu[i]*self.Y_phase_scale[i]/self.Y_phase_molmass[i],)
+                           # Claude: added code here (start)
+                           'ChemPotMol':    mu[i]/self.Y_phase_scale[i],
+                           'ChemPotMass':   mu[i]/self.Y_phase_scale[i]/self.Y_phase_molmass[i],
+                           # Claude: added code here (end)
                            'ChemPotMolSys': mu[i],
                            }
                     phases.append(phs)
@@ -526,15 +563,30 @@ class GibbsMinFinder(object):
                                     'MassFrac':        Ymfrac[iy0+i],
                                     'MassFracInPhase': Ym[iy0+i]/mtotph,
                                     'ActivCoef':       gamma[iy0+i],
-                                    'Activity':        gamma[iy0+i]*Y[iy0+i],
-                                    'ActivityInPhase': gamma[iy0+i]*Y[iy0+i]/ytotph,
-                                    'ChemPotMol':      mu[i]*self.Y_phase_scale[i],
-                                    'ChemPotMass':     mu[i]*self.Y_phase_scale[i]/self.Y_phase_molmass[i],
-                                    'ChemPotMolSys':   mu[i]
+                                    # Claude: deleted code here
+                                    # (old: 'Activity':        gamma[iy0+i]*Y[iy0+i],
+                                    #       'ActivityInPhase': gamma[iy0+i]*Y[iy0+i]/ytotph,
+                                    #       'ChemPotMol':      mu[i]*self.Y_phase_scale[i],
+                                    #       'ChemPotMass':     mu[i]*self.Y_phase_scale[i]/self.Y_phase_molmass[i],
+                                    #       'ChemPotMolSys':   mu[i])
+                                    # Claude: added code here (start)
+                                    # Activities use true mole fractions (Ytot), not the scaled Y, and
+                                    # the species index into the full Y vector is iy0+i (not i).
+                                    'Activity':        gamma[iy0+i]*Ytot[iy0+i],
+                                    'ActivityInPhase': gamma[iy0+i]*Ytot[iy0+i]/ytotph,
+                                    'ChemPotMol':      mu[iy0+i]/self.Y_phase_scale[iy0+i],
+                                    'ChemPotMass':     mu[iy0+i]/self.Y_phase_scale[iy0+i]/self.Y_phase_molmass[iy0+i],
+                                    'ChemPotMolSys':   mu[iy0+i]
+                                    # Claude: added code here (end)
                                     }
                             phscs.append(phsc)
-                    phs = {'Phase':    self.Y_phase_phase[i],
-                           'Name':     self.Y_phase_name[i],
+                    # Claude: deleted code here
+                    # (old: phs = {'Phase':    self.Y_phase_phase[i],
+                    #              'Name':     self.Y_phase_name[i],)
+                    # Claude: added code here (start)
+                    phs = {'Phase':    self.Y_phase_phase[iy0],
+                           'Name':     sps.name,
+                    # Claude: added code here (end)
                            'Mass':     mtotph*self.quantity,
                            'MassFrac': mtotph/mtot,
                            'PhaseComponents':phscs}
@@ -782,7 +834,11 @@ class GibbsMinFinder(object):
         H = 0.
         if self.ncryst>0:
             ys    = Y[:self.ncryst]
-            Hsol  = np.array(self.mdb['DfH']/self.mdb['moles'])
+            # Claude: deleted code here
+            # (old: Hsol  = np.array(self.mdb['DfH']/self.mdb['moles']))
+            # Claude: added code here (start)
+            Hsol  = np.array(self.mdb['DfH']*self.mdb['moles'])   # Per mole of system components, like mfDfG
+            # Claude: added code here (end)
             H     = (ys*Hsol).sum()
         if self.nliq>0:
             for iliq,liq in enumerate(self.liquids):
