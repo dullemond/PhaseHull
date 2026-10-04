@@ -10,4 +10,17 @@ https://research.amnh.org/~debel/vapors1/codes/B83a/B83acts1.txt
 
 The Berman 1983 model describes the system SiO2, MgO, CaO, Al2O3. 
 
+A second correction: the formula of rankinite is printed as Ca2Si3O8 in the
+thesis table, but rankinite is Ca3Si2O7, and the thermodynamic data in that
+row belong to Ca3Si2O7. Read as Ca3Si2O7, the enthalpy of formation from the
+oxides (Berman 1983's own lime and a-quartz) is -44.0 kJ per mole of oxide,
+between wollastonite (-43.6) and b-larnite (-44.4); read as Ca2Si3O8 it would
+be +11 kJ per mole of oxide, i.e. never stable. This is also consistent with
+Berman & Brown 1984 (same S and Cp, formula Ca3Si2O7) and with Holland &
+Powell's rankinite (Ca3Si2O7, H = -3944.4 kJ, S = 210 J/K). Only the formula
+was changed, in all copies of the thesis table:
+  Berman1983/minerals.fwf, minerals_reduced.fwf, minerals_reduced_1.fwf,
+  Berman1988/minerals_berman_phd_1983.fwf,
+  GhiorsoSack1995/MELTS_Code/minerals_bermanphd.fwf
+
 2026-03-15
