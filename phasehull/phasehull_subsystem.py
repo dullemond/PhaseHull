@@ -116,6 +116,10 @@ class SubSystem(object):
         if self.ncomp_comp==self.ncomp_prim:
             self.nu_comp_prim  = scipy.linalg.inv(self.nu_prim_comp)
 
+    # Claude addition (start)
+    # Claude corrected a typo in the docstring below: "because the primitive system
+    # is allowed to be a subspace" -> "because the composite system is allowed ...".
+    # Claude addition (end)
     def compute_mole_ratio_from_comp_to_prim(self,xcomp):
         """
         If you mix 1 mole of composite components with mole fractions xcomp,
@@ -138,7 +142,7 @@ class SubSystem(object):
         to primitive). The inverse function would simply be that you
         convert xprim into pcomp, call compute_mole_ratio_from_comp_to_prim()
         and then take the inverse (1/...) of the result. The reason why
-        this function is not added here is because the primitive system
+        this function is not added here is because the composite system
         is allowed to be a subspace (lower dimensional) of the primitive
         system (for solid solutions), in which case the inverse, starting
         from an arbitrary xprim, may not be defined, as the xprim location
@@ -257,7 +261,13 @@ class SubSystem(object):
                       to compare to the G functions living on the primitive space.
         """
         G_nomix  = (np.array(self.G_comp_prim)[:,None]*self.nu_prim_comp/self.comp_nprim[None,:]).sum(axis=0)
-        G_nomix /= self.comp_nprim
+        # Claude deleted old code here
+        # Claude addition (start)
+        # The division by self.comp_nprim was already done inside the sum above
+        # (which yields the linear mean per mole of primitive components). The old
+        # line "G_nomix /= self.comp_nprim" divided a second time, which was wrong
+        # (e.g. it gave (G_SiO2+2*G_MgO)/9 instead of (G_SiO2+2*G_MgO)/3 for Mg2SiO4).
+        # Claude addition (end)
         return G_nomix
 
     def convert_from_ncomp_to_nprim(self,ncomp):
@@ -301,15 +311,73 @@ class SubSystem(object):
         xprim = nprim/nprim.sum(axis=-1)[...,None]
         return xprim
     
-    def convert_activity_from_comp_to_prim(self,acomp):
+    # Claude deleted old code here
+    # Claude addition (start)
+    def convert_activity_from_comp_to_prim(self,acomp,T=None,mu0_comp=None,mu0_prim=None,
+                                           Rgas=8.314,assume_linear_standard_states=False):
         """
         If you have computed the activities of the composite components, this
         function will return the corresponding activities of the primitive
-        components.
+        components, each relative to the real standard state of that primitive
+        component (e.g. pure liquid MgO), not relative to a fictive one.
+
+        Why the default goes through the chemical potentials:
+
+          An activity is only defined together with its standard state:
+          mu_i = mu0_i + R*T*ln(a_i). The chemical potentials of the two
+          component systems are related exactly by the stoichiometry
+          (mu_comp = nu^T mu_prim, see convert_chemical_potential_from_comp_to_prim()),
+          but the standard states are in general NOT related this way: the
+          standard state of a composite component (e.g. pure liquid Mg2SiO4)
+          differs from the stoichiometric combination of the standard states
+          of the primitive components (2 MgO(liq) + SiO2(liq), unmixed) by the
+          Gibbs energy of formation of the composite from the primitives,
+          Delta_f G = mu0_comp - sum_p nu_pc mu0_prim_p, which is usually large.
+
+          Transforming ln(a) directly with the stoichiometric matrix (the old
+          method, still available with assume_linear_standard_states=True)
+          therefore silently yields the primitive activities relative to a
+          fictive standard state. For instance, from a_Mg2SiO4 and a_SiO2 it
+          gives a_MgO relative to mu0*_MgO = (mu0_Mg2SiO4 - mu0_SiO2)/2, and
+          the true a_MgO differs from it by a factor exp((mu0*_MgO-mu0_MgO)/RT),
+          which can be many orders of magnitude. The two methods agree only
+          if Delta_f G = 0 for all composite components.
+
+          The default method therefore does:
+            mu_comp = mu0_comp + R*T*ln(a_comp)
+            mu_prim = (nu^-1)^T mu_comp        (exact)
+            a_prim  = exp((mu_prim - mu0_prim)/(R*T))
 
         Arguments:
 
           acomp   The activities of the components in the composite system
+                  (array [...,ncomp_comp]), relative to the standard states
+                  mu0_comp.
+
+        Keywords:
+
+          T       Temperature [K]. Required unless assume_linear_standard_states=True.
+                  Scalar or array broadcastable to acomp[...,0].
+
+          mu0_comp   Standard-state chemical potentials of the composite components
+                     [J/mol], per (weighted, see comp_comp_weights) formula unit.
+                     If None, self.G_comp_comp is used.
+
+          mu0_prim   Standard-state chemical potentials of the primitive components
+                     [J/mol]. If None, self.G_comp_prim is used.
+                     NOTE: mu0_comp and mu0_prim must refer to the same energy
+                     zero point (e.g. both formation from the elements, or both
+                     atomization energies), and must be evaluated at the same T and P.
+                     They may come from different models (e.g. mu0_comp from
+                     Ghiorso & Sack 1995 and mu0_prim from Berman 1983); then
+                     aprim is the activity relative to the pure primitive
+                     component as described by the second model.
+
+          Rgas    Gas constant [J/(mol K)].
+
+          assume_linear_standard_states   If True, use the old method (direct
+                  linear transformation of ln(a), i.e. assuming that
+                  mu0_comp = nu^T mu0_prim). Default False.
 
         Returns:
 
@@ -317,10 +385,27 @@ class SubSystem(object):
         """
         assert hasattr(self,'nu_comp_prim'), 'Error: Can only convert activity from composite to primitive system if both have the same dimension.'
         acomp  = np.array(acomp)
-        lacomp = np.log(acomp)
-        laprim = (self.nu_comp_prim[...,:,:]*lacomp[...,:,None]).sum(axis=-2)
-        aprim  = np.exp(laprim)
+        if assume_linear_standard_states:
+            # The old method (kept as an option)
+            lacomp = np.log(acomp)
+            laprim = (self.nu_comp_prim[...,:,:]*lacomp[...,:,None]).sum(axis=-2)
+            aprim  = np.exp(laprim)
+            return aprim
+        if mu0_comp is None: mu0_comp = self.G_comp_comp
+        if mu0_prim is None: mu0_prim = self.G_comp_prim
+        assert T is not None, 'Error: Temperature T is needed to convert activities via the chemical potentials (or use assume_linear_standard_states=True).'
+        assert mu0_comp is not None and mu0_prim is not None, 'Error: Standard-state chemical potentials of both systems are needed (pass mu0_comp and mu0_prim, or G_comp_comp and G_comp_prim at creation of the SubSystem), or use assume_linear_standard_states=True.'
+        mu0_comp = np.array(mu0_comp)
+        mu0_prim = np.array(mu0_prim)
+        assert mu0_comp.shape[-1]==self.ncomp_comp, 'Error: mu0_comp has wrong length.'
+        assert mu0_prim.shape[-1]==self.ncomp_prim, 'Error: mu0_prim has wrong length.'
+        RT     = Rgas*np.array(T,dtype=float)
+        if RT.ndim>0: RT = RT[...,None]
+        mucomp = mu0_comp + RT*np.log(acomp)
+        muprim = self.convert_chemical_potential_from_comp_to_prim(mucomp)
+        aprim  = np.exp((muprim-mu0_prim)/RT)
         return aprim
+    # Claude addition (end)
 
     def convert_chemical_potential_from_comp_to_prim(self,mucomp):
         """
@@ -402,25 +487,65 @@ class SubSystem(object):
             xcomp[np.any(xcomp<0,axis=-1)] = np.nan
         return xcomp
 
-    def convert_activity_from_prim_to_comp(self,aprim):
+    # Claude deleted old code here
+    # Claude addition (start)
+    def convert_activity_from_prim_to_comp(self,aprim,T=None,mu0_comp=None,mu0_prim=None,
+                                           Rgas=8.314,assume_linear_standard_states=False):
         """
         If you have computed the activities of the primitive components, this
         function will return the corresponding activities of the composite
-        components.
+        components, each relative to the real standard state of that composite
+        component (e.g. pure liquid Mg2SiO4), not relative to a fictive one.
+
+        The default method goes through the chemical potentials:
+            mu_prim = mu0_prim + R*T*ln(a_prim)
+            mu_comp = nu^T mu_prim             (exact)
+            a_comp  = exp((mu_comp - mu0_comp)/(R*T))
+        For the reasoning why this is necessary (the standard states of the
+        two systems are in general not related by the stoichiometry), see the
+        docstring of convert_activity_from_comp_to_prim(). Unlike that
+        function, this direction also works if the composite system is a
+        lower-dimensional subspace of the primitive system.
 
         Arguments:
 
           aprim   The activities of the components in the primitive system
+                  (array [...,ncomp_prim]), relative to the standard states
+                  mu0_prim.
+
+        Keywords:
+
+          T, mu0_comp, mu0_prim, Rgas, assume_linear_standard_states
+                  See convert_activity_from_comp_to_prim(). With
+                  assume_linear_standard_states=True the old method (direct
+                  linear transformation of ln(a)) is used.
 
         Returns:
 
           acomp   The activities of the components in the composite system
         """
         aprim  = np.array(aprim)
-        laprim = np.log(aprim)
-        lacomp = (self.nu_prim_comp[...,:,:]*laprim[...,:,None]).sum(axis=-2)
-        acomp  = np.exp(lacomp)
+        if assume_linear_standard_states:
+            # The old method (kept as an option)
+            laprim = np.log(aprim)
+            lacomp = (self.nu_prim_comp[...,:,:]*laprim[...,:,None]).sum(axis=-2)
+            acomp  = np.exp(lacomp)
+            return acomp
+        if mu0_comp is None: mu0_comp = self.G_comp_comp
+        if mu0_prim is None: mu0_prim = self.G_comp_prim
+        assert T is not None, 'Error: Temperature T is needed to convert activities via the chemical potentials (or use assume_linear_standard_states=True).'
+        assert mu0_comp is not None and mu0_prim is not None, 'Error: Standard-state chemical potentials of both systems are needed (pass mu0_comp and mu0_prim, or G_comp_comp and G_comp_prim at creation of the SubSystem), or use assume_linear_standard_states=True.'
+        mu0_comp = np.array(mu0_comp)
+        mu0_prim = np.array(mu0_prim)
+        assert mu0_comp.shape[-1]==self.ncomp_comp, 'Error: mu0_comp has wrong length.'
+        assert mu0_prim.shape[-1]==self.ncomp_prim, 'Error: mu0_prim has wrong length.'
+        RT     = Rgas*np.array(T,dtype=float)
+        if RT.ndim>0: RT = RT[...,None]
+        muprim = mu0_prim + RT*np.log(aprim)
+        mucomp = self.convert_chemical_potential_from_prim_to_comp(muprim)
+        acomp  = np.exp((mucomp-mu0_comp)/RT)
         return acomp
+    # Claude addition (end)
         
     def convert_chemical_potential_from_prim_to_comp(self,muprim):
         """
